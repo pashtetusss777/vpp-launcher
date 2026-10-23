@@ -73,7 +73,6 @@ contextBridge.exposeInMainWorld('vanilla', {
     microsoft: () => call('auth:microsoft'),
     microsoftCancel: () => call('auth:microsoft-cancel'),
     onDevice: fn => on('auth:device', fn),
-    onAccountsUpdated: fn => on('accounts:updated', fn),
   },
   window: {
     minimize: () => call('window:minimize'),

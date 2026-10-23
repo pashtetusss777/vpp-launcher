@@ -158,78 +158,53 @@ function rememberAccount(account) {
   return account;
 }
 
-function freshenSkinsInBackground() {
-  const s = settings.get();
-  const accounts = (s.accounts || []).slice();
-  const needsSkins = accounts.filter(a => (a.type === 'microsoft' || a.type === 'ely') && (!a.skinUrl || /^http:\/\//i.test(a.skinUrl)));
-  if (!needsSkins.length) return;
-  Promise.all(needsSkins.map(async account => {
-    try {
-      const next = await Promise.race([
-        auth.withSkin(account),
-        new Promise(resolve => setTimeout(() => resolve(null), 5000)),
-      ]);
-      if (next && next.skinUrl && next.skinUrl !== account.skinUrl) {
-        return next;
-      }
-    } catch { /* ignore network error */ }
-    return null;
-  })).then(results => {
-    let changed = false;
-    const curAccounts = (settings.get().accounts || []).slice();
-    for (const next of results) {
-      if (!next) continue;
-      const i = curAccounts.findIndex(a => a.id === next.id);
-      if (i >= 0 && curAccounts[i].skinUrl !== next.skinUrl) {
-        curAccounts[i] = next;
-        changed = true;
-      }
-    }
-    if (changed) {
-      settings.update({ accounts: curAccounts });
-      send('accounts:updated', curAccounts);
-    }
-  }).catch(() => {});
-}
-
 async function init() {
   const s = settings.get();
+  const accounts = [];
+  let skinsChanged = false;
+  for (const account of s.accounts || []) {
+    if (account.type === 'microsoft' || account.type === 'ely') {
+      const needsSkin = !account.skinUrl || /^http:\/\//i.test(account.skinUrl);
+      if (needsSkin) {
+        const next = await Promise.race([
+          auth.withSkin(account),
+          new Promise(resolve => setTimeout(() => resolve({
+            ...account,
+            skinUrl: account.skinUrl ? String(account.skinUrl).replace(/^http:\/\//i, 'https://') : account.skinUrl,
+          }), 4000)),
+        ]);
+        if (next.skinUrl !== account.skinUrl) skinsChanged = true;
+        accounts.push(next);
+        continue;
+      }
+    }
+    accounts.push(account);
+  }
+  if (skinsChanged) settings.update({ accounts });
+  const view = skinsChanged ? settings.get() : s;
   const root = gameRoot();
   const packState = await mrpack.loadState(root);
   const packConfig = mrpack.effectiveConfig(config, packState);
-  const hasProject = !!mrpack.projectId(config);
-  const pack = {
-    enabled: hasProject,
-    project: mrpack.projectId(config),
-    local: packState ? { versionId: packState.versionId, versionNumber: packState.versionNumber } : null,
-    remote: null,
-    upToDate: true,
-    dependencies: packState?.dependencies || {},
-    minecraft: packState?.minecraft || config.minecraft,
-    fabricLoader: packState?.fabricLoader || config.fabricLoader,
-  };
-
-  // Run non-critical background network tasks without blocking UI boot
-  setImmediate(() => {
-    freshenSkinsInBackground();
-    if (hasProject) {
-      mrpack.status(root, config)
-        .then(status => send('pack:status', status))
-        .catch(() => {});
-    }
-  });
-
+  let pack = { enabled: false };
+  try {
+    pack = await mrpack.status(root, config);
+  } catch {
+    pack = { enabled: !!mrpack.projectId(config), error: 'Не удалось проверить сборку' };
+  }
   return {
     version: VERSION,
     config: packConfig,
-    settings: s,
+    settings: view,
     gameRoot: root,
     pack,
     memory: await system.memory({ wait: false }),
     background: s.customBackground && await exists(s.customBackground.file)
       ? { url: pathToFileURL(s.customBackground.file).href, name: s.customBackground.name } : null,
     state: { phase: session.phase, startedAt: session.startedAt, server: session.server },
-    update: null,
+    update: await Promise.race([
+      updater.check(config).catch(() => null),
+      new Promise(resolve => setTimeout(() => resolve(null), 4000)),
+    ]),
   };
 }
 
