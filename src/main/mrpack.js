@@ -46,9 +46,9 @@ function clientWanted(file) {
   return side !== 'unsupported';
 }
 
-async function modrinth(pathname, { signal } = {}) {
+async function modrinth(pathname) {
   try {
-    return await fetchJson(MODRINTH + pathname, { signal });
+    return await fetchJson(MODRINTH + pathname);
   } catch (e) {
     if (e.status === 429) throw new Error('Modrinth просит подождать минуту');
     if (e.status === 404) throw new Error('Modrinth не нашёл этот модпак');
@@ -56,8 +56,8 @@ async function modrinth(pathname, { signal } = {}) {
   }
 }
 
-async function latestVersion(project, { signal } = {}) {
-  const versions = await modrinth(`/project/${encodeURIComponent(project)}/version`, { signal });
+async function latestVersion(project) {
+  const versions = await modrinth(`/project/${encodeURIComponent(project)}/version`);
   if (!Array.isArray(versions) || !versions.length) throw new Error('У модпака нет версий на Modrinth');
   // Prefer a version that actually ships an .mrpack
   const withPack = versions.find(v => (v.files || []).some(f => /\.mrpack$/i.test(f.filename || f.file_name || '')));
@@ -193,15 +193,13 @@ function depsFromIndex(index) {
   return out;
 }
 
-async function status(root, config, { signal } = {}) {
+async function status(root, config) {
   const project = projectId(config);
   if (!project) return { enabled: false };
   const local = await loadState(root);
   let remote = null;
-  const abort = new AbortController();
-  const timer = setTimeout(() => abort.abort(), 6000);
   try {
-    const version = await latestVersion(project, { signal: abort.signal });
+    const version = await latestVersion(project);
     remote = {
       versionId: version.id,
       versionNumber: version.version_number || version.name || version.id,
@@ -215,11 +213,9 @@ async function status(root, config, { signal } = {}) {
         versionId: local.versionId,
         versionNumber: local.versionNumber,
       } : null,
-      error: e.message || 'Не удалось проверить сборку',
+      error: e.message,
       upToDate: false,
     };
-  } finally {
-    clearTimeout(timer);
   }
   const upToDate = !!(local && local.versionId && local.versionId === remote.versionId);
   return {
