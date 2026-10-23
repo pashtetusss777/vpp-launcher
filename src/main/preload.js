@@ -22,6 +22,8 @@ contextBridge.exposeInMainWorld('vanilla', {
     list: () => call('mods:list'),
     builtin: () => call('mods:builtin'),
     add: files => call('mods:add', files),
+    importPack: file => call('mods:import', file),
+    onImport: fn => on('mods:import', fn),
     toggle: (file, on) => call('mods:toggle', file, on),
     remove: file => call('mods:remove', file),
     restore: token => call('mods:restore', token),

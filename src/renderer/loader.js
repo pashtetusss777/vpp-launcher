@@ -484,6 +484,13 @@
   // ------------------------------------------------------------------ status line and toast
 
   const statusTimers = {};
+  function holdStatus(page, ic, text) {
+    const el = $(`.page[data-page="${page}"] [data-status]`);
+    if (!el) return;
+    clearTimeout(statusTimers[page]);
+    el.innerHTML = `<span class="chip-ic">${icon(ic)}</span><span>${esc(text)}</span>`;
+  }
+
   function status(page, ic, text, kind = '', extra) {
     const el = $(`.page[data-page="${page}"] [data-status]`);
     if (!el) return toast(ic, text, kind);
@@ -618,7 +625,7 @@
       any ||= g.mods.length > 0;
     }
     if (!state.mods.length && !$('#modSearch').value) {
-      modList.insertAdjacentHTML('beforeend', '<div class="list-empty">Своих модов пока нет. Найдите их на Modrinth или CurseForge, либо добавьте .jar</div>');
+      modList.insertAdjacentHTML('beforeend', '<div class="list-empty">Своих модов пока нет. Найдите их на Modrinth или CurseForge, либо добавьте .jar, .mrpack или .zip</div>');
     } else if (!any) {
       modList.insertAdjacentHTML('beforeend', '<div class="list-empty">Ничего не нашлось</div>');
     }
@@ -744,7 +751,51 @@
     }
   }
 
-  $('#modAdd').addEventListener('click', async () => addFiles(await api.pick('jar')));
+  function packNote(result) {
+    const name = result.name || 'Сборка';
+    const got = result.downloaded || 0;
+    const total = result.total || 0;
+    if (!total) return `«${name}» применена`;
+    if (!got) return `«${name}»: моды уже на месте`;
+    return `«${name}»: поставлено ${got} ${plural(got, 'мод', 'мода', 'модов')}`;
+  }
+
+  async function importPack(file) {
+    setShelfSource('mods', 'installed');
+    holdStatus('mods', 'download', 'Читаем сборку…');
+    const off = api.mods.onImport(p => { if (p?.text) holdStatus('mods', 'download', p.text); });
+    try {
+      const result = await api.mods.importPack(file);
+      off();
+      await refreshMods();
+      if (result.kind === 'jars') {
+        const added = (result.results || []).filter(r => !r.error);
+        const failed = (result.results || []).filter(r => r.error);
+        if (added.length === 1) status('mods', 'plus', added[0].replaced ? `«${added[0].name}» обновлён` : `Мод «${added[0].name}» добавлен`, 'good');
+        else if (added.length) status('mods', 'plus', `Добавлено ${added.length} ${plural(added.length, 'мод', 'мода', 'модов')}`, 'good');
+        else status('mods', 'warn', 'В архиве не нашлось модов Fabric', 'warn');
+        if (failed.length) setTimeout(() => status('mods', 'warn', `«${failed[0].file}» - ${failed[0].error}`, 'warn'), added.length ? 1400 : 0);
+        return;
+      }
+      const note = packNote(result);
+      const mismatch = result.minecraft && boot?.config?.minecraft && result.minecraft !== boot.config.minecraft
+        ? ` · сборка для ${result.minecraft}`
+        : '';
+      status('mods', 'plus', note + mismatch, 'good');
+    } catch (e) {
+      off();
+      status('mods', 'warn', e.message, 'warn');
+    }
+  }
+
+  async function addDropped(paths) {
+    const jars = paths.filter(p => /\.jar$/i.test(p));
+    const packs = paths.filter(p => /\.(mrpack|zip)$/i.test(p));
+    if (jars.length) await addFiles(jars);
+    for (const file of packs) await importPack(file);
+  }
+
+  $('#modAdd').addEventListener('click', async () => addDropped(await api.pick('jar')));
   $('#modSearch').addEventListener('input', () => onShelfQuery('mods'));
 
   // a file dragged over any part of the window
@@ -763,7 +814,7 @@
         ? ['Отпустите, чтобы добавить шейдер', 'Файл .zip']
         : state.page === 'packs'
           ? ['Отпустите, чтобы добавить ресурспак', 'Файл .zip']
-          : ['Отпустите, чтобы добавить мод', `Файлы .jar для Fabric · Minecraft ${boot?.config.minecraft || ''}`];
+          : ['Отпустите, чтобы добавить моды', `.jar, .mrpack или .zip · Minecraft ${boot?.config.minecraft || ''}`];
       $('#dropTitle').textContent = pictures ? 'Отпустите, чтобы поставить фон' : dropHere[0];
       $('#dropSub').textContent = pictures ? 'PNG, JPG или WebP, лучше от 1920×1080' : dropHere[1];
       $('.drop-icon use').setAttribute('href', pictures ? '#i-image' : '#i-plus');
@@ -782,15 +833,21 @@
     if (pictures.length) loadBackground(api.pathOf(pictures[0]));
     if (rest.length) {
       const jars = rest.filter(f => /\.jar$/i.test(f.name));
-      const zips = rest.filter(f => /\.zip$/i.test(f.name));
-      if (jars.length) {
+      const packs = rest.filter(f => /\.mrpack$/i.test(f.name) || (state.page === 'mods' && /\.zip$/i.test(f.name)));
+      const zips = rest.filter(f => /\.zip$/i.test(f.name) && !packs.includes(f));
+      if (jars.length && !packs.length) {
         show('mods');
         setTimeout(() => addFiles(jars.map(f => api.pathOf(f)).filter(Boolean)), 250);
+      }
+      if (packs.length) {
+        show('mods');
+        const paths = [...jars, ...packs].map(f => api.pathOf(f)).filter(Boolean);
+        setTimeout(() => addDropped(paths), 250);
       }
       if (zips.length) {
         const page = state.page === 'shaders' ? 'shaders' : 'packs';
         show(page);
-        setTimeout(() => addLocal(page, zips.map(f => api.pathOf(f)).filter(Boolean)), jars.length ? 400 : 250);
+        setTimeout(() => addLocal(page, zips.map(f => api.pathOf(f)).filter(Boolean)), 250);
       }
     }
   });

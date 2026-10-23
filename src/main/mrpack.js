@@ -11,6 +11,7 @@ const {
   exists, readJson, writeJson, sha1File, fetchJson, fetchWithRetry,
 } = require('./util');
 const { openZip, readEntry } = require('./zip');
+const mods = require('./mods');
 
 const MODRINTH = 'https://api.modrinth.com/v2';
 const STATE_FILE = 'launcher/pack.json';
@@ -227,6 +228,190 @@ async function status(root, config) {
   };
 }
 
+async function installIndex(root, mrpackPath, { signal, report, previous, label = 'Ставим моды' } = {}) {
+  const stage = (text, extra = {}) => report?.(text, extra);
+  stage('Читаем состав сборки…');
+  const index = await readIndexFromMrpack(mrpackPath);
+  const wanted = index.files.filter(clientWanted).map(f => {
+    const rel = safeRel(f.path);
+    return {
+      path: rel,
+      sha1: f.hashes?.sha1 || '',
+      sha512: f.hashes?.sha512 || '',
+      size: f.fileSize || f.file_size || 0,
+      downloads: (f.downloads || []).filter(u => /^https:\/\//i.test(u)),
+    };
+  }).filter(f => f.sha1 && f.downloads.length);
+
+  const prevPaths = new Set((previous?.files || []).map(f => f.path));
+  const nextPaths = new Set(wanted.map(f => f.path));
+  if (previous) {
+    for (const rel of prevPaths) {
+      if (nextPaths.has(rel)) continue;
+      await fsp.rm(path.join(root, ...rel.split('/')), { force: true }).catch(() => {});
+    }
+  }
+
+  const missing = [];
+  for (const file of wanted) {
+    const abs = path.join(root, ...file.path.split('/'));
+    if (!await fileMatches(abs, file.sha1, file.size || null)) missing.push(file);
+  }
+
+  if (missing.length) {
+    const total = missing.reduce((s, f) => s + (f.size || 0), 0) || missing.length;
+    let done = 0;
+    let files = 0;
+    stage(`${label} · 0 из ${missing.length}`, { done: 0, total, files: 0, count: missing.length });
+    for (const file of missing) {
+      if (signal?.aborted) throw Object.assign(new Error('Отменено'), { name: 'AbortError' });
+      const abs = path.join(root, ...file.path.split('/'));
+      await downloadFile(file.downloads[0], abs, {
+        sha1: file.sha1,
+        size: file.size,
+        signal,
+        onBytes: n => {
+          done += n;
+          stage(`${label} · ${files + 1} из ${missing.length}`, {
+            done: total ? done : files,
+            total: total || missing.length,
+            files,
+            count: missing.length,
+          });
+        },
+      });
+      files++;
+      stage(`${label} · ${files} из ${missing.length}`, {
+        done: total ? Math.min(done, total) : files,
+        total: total || missing.length,
+        files,
+        count: missing.length,
+      });
+    }
+  }
+
+  stage('Применяем конфиги сборки…');
+  const prevOverrides = new Set(previous?.overrides || []);
+  const overrides = await applyOverrides(mrpackPath, root);
+  if (previous) {
+    for (const rel of prevOverrides) {
+      if (overrides.includes(rel)) continue;
+      if (nextPaths.has(rel)) continue;
+      await fsp.rm(path.join(root, ...rel.split('/')), { force: true }).catch(() => {});
+    }
+  }
+
+  return { index, wanted, missing, overrides, deps: depsFromIndex(index) };
+}
+
+function extractAll(archive, dest) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('tar', ['-xf', archive, '-C', dest], { windowsHide: true });
+    child.on('error', reject);
+    child.on('exit', code => (code === 0 ? resolve() : reject(new Error(`Не удалось распаковать архив (${code})`))));
+  });
+}
+
+async function installJarZip(root, archive, mc) {
+  const staging = path.join(root, 'launcher', 'import-staging');
+  await fsp.rm(staging, { recursive: true, force: true });
+  await fsp.mkdir(staging, { recursive: true });
+  try {
+    await extractAll(archive, staging);
+    const jars = [];
+    async function walk(dir) {
+      let entries = [];
+      try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
+      for (const ent of entries) {
+        if (ent.name === '__MACOSX' || ent.name.startsWith('.')) continue;
+        const full = path.join(dir, ent.name);
+        const rel = path.relative(staging, full);
+        if (rel.startsWith('..') || path.isAbsolute(rel)) continue;
+        if (ent.isDirectory()) await walk(full);
+        else if (ent.isFile() && /\.jar$/i.test(ent.name)) jars.push(full);
+      }
+    }
+    await walk(staging);
+    if (!jars.length) throw new Error('В архиве нет модов. Нужен .mrpack или zip с файлами .jar');
+    return mods.add(root, mc, jars);
+  } finally {
+    await fsp.rm(staging, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+function curseCdn(file) {
+  const id = String(file.id || '');
+  if (id.length < 5 || !file.fileName) return '';
+  return `https://edge.forgecdn.net/files/${id.slice(0, 4)}/${id.slice(4)}/${encodeURIComponent(file.fileName)}`;
+}
+
+async function installCurse(root, archive, manifest, report) {
+  const stage = (text, extra = {}) => report?.(text, extra);
+  const files = (manifest.files || []).filter(f => f && f.projectID && f.fileID && f.required !== false);
+  if (!files.length) throw new Error('В сборке CurseForge нет модов');
+  let downloaded = 0;
+  for (let i = 0; i < files.length; i++) {
+    const entry = files[i];
+    stage(`Ставим моды · ${i + 1} из ${files.length}`, { done: i, total: files.length });
+    let info;
+    try {
+      info = await fetchJson(`https://api.curse.tools/v1/cf/mods/${entry.projectID}/files/${entry.fileID}`);
+    } catch {
+      throw new Error('CurseForge не ответил');
+    }
+    const file = info?.data;
+    const filename = path.basename(String(file?.fileName || ''));
+    if (!file || !/\.jar$/i.test(filename)) continue;
+    const url = /^https:\/\//i.test(file.downloadUrl || '') ? file.downloadUrl : curseCdn(file);
+    if (!url) continue;
+    const dest = path.join(mods.modsDir(root), filename);
+    const sha1 = (file.hashes || []).find(h => h.algo === 1)?.value || '';
+    if (await fileMatches(dest, sha1, file.fileLength || null)) continue;
+    await downloadFile(url, dest, { sha1, size: file.fileLength || 0 });
+    downloaded++;
+  }
+  stage('Применяем конфиги сборки…');
+  await applyOverrides(archive, root);
+  return {
+    kind: 'curse',
+    name: manifest.name || path.basename(archive),
+    downloaded,
+    total: files.length,
+  };
+}
+
+async function installDropped(root, file, mc, report) {
+  const base = path.basename(String(file || ''));
+  if (!/\.(mrpack|zip)$/i.test(base)) throw new Error('Нужен файл .mrpack или .zip');
+  let zip;
+  try {
+    zip = await openZip(file);
+  } catch {
+    throw new Error('Это не архив .mrpack или .zip');
+  }
+  if (zip.entries.has('modrinth.index.json')) {
+    const applied = await installIndex(root, file, { report });
+    return {
+      kind: 'mrpack',
+      name: applied.index.name || base,
+      version: applied.index.versionId || '',
+      downloaded: applied.missing.length,
+      total: applied.wanted.length,
+      minecraft: applied.deps.minecraft || '',
+    };
+  }
+  if (zip.entries.has('manifest.json')) {
+    const raw = await readEntry(zip, 'manifest.json', 2 * 1048576);
+    let manifest = null;
+    try { manifest = JSON.parse(raw.toString('utf8')); } catch { manifest = null; }
+    if (manifest?.manifestType === 'minecraftModpack' && Array.isArray(manifest.files)) {
+      return installCurse(root, file, manifest, report);
+    }
+  }
+  const results = await installJarZip(root, file, mc);
+  return { kind: 'jars', results };
+}
+
 async function sync(root, config, { signal, report } = {}) {
   const project = projectId(config);
   if (!project) return { skipped: true, config };
@@ -262,81 +447,13 @@ async function sync(root, config, { signal, report } = {}) {
     });
   }
 
-  stage('Читаем состав сборки…');
-  const index = await readIndexFromMrpack(mrpackPath);
-  const wanted = index.files.filter(clientWanted).map(f => {
-    const rel = safeRel(f.path);
-    return {
-      path: rel,
-      sha1: f.hashes?.sha1 || '',
-      sha512: f.hashes?.sha512 || '',
-      size: f.fileSize || f.file_size || 0,
-      downloads: (f.downloads || []).filter(u => /^https:\/\//i.test(u)),
-    };
-  }).filter(f => f.sha1 && f.downloads.length);
-
-  // Remove previously managed files that left the pack
-  const prevPaths = new Set((local?.files || []).map(f => f.path));
-  const nextPaths = new Set(wanted.map(f => f.path));
-  for (const rel of prevPaths) {
-    if (nextPaths.has(rel)) continue;
-    await fsp.rm(path.join(root, ...rel.split('/')), { force: true }).catch(() => {});
-  }
-
-  const missing = [];
-  for (const file of wanted) {
-    const abs = path.join(root, ...file.path.split('/'));
-    if (!await fileMatches(abs, file.sha1, file.size || null)) missing.push(file);
-  }
-
-  if (missing.length) {
-    const total = missing.reduce((s, f) => s + (f.size || 0), 0) || missing.length;
-    let done = 0;
-    stage(`Обновляем моды · 0 из ${missing.length}`, { done: 0, total, files: 0, count: missing.length });
-    let files = 0;
-    for (const file of missing) {
-      if (signal?.aborted) throw Object.assign(new Error('Отменено'), { name: 'AbortError' });
-      const abs = path.join(root, ...file.path.split('/'));
-      let got = 0;
-      await downloadFile(file.downloads[0], abs, {
-        sha1: file.sha1,
-        size: file.size,
-        signal,
-        onBytes: n => {
-          got += n;
-          done += n;
-          stage(`Обновляем моды · ${files + 1} из ${missing.length}`, {
-            done: total ? done : files,
-            total: total || missing.length,
-            files,
-            count: missing.length,
-          });
-        },
-      });
-      // correct byte accounting when size unknown
-      if (!file.size) done += 0;
-      files++;
-      stage(`Обновляем моды · ${files} из ${missing.length}`, {
-        done: total ? Math.min(done, total) : files,
-        total: total || missing.length,
-        files,
-        count: missing.length,
-      });
-    }
-  }
-
-  stage('Применяем конфиги сборки…');
-  // Drop previous override files that are no longer in the new override set after apply
-  const prevOverrides = new Set(local?.overrides || []);
-  const overrides = await applyOverrides(mrpackPath, root);
-  for (const rel of prevOverrides) {
-    if (overrides.includes(rel)) continue;
-    // only remove if not also a managed index file
-    if (nextPaths.has(rel)) continue;
-    await fsp.rm(path.join(root, ...rel.split('/')), { force: true }).catch(() => {});
-  }
-
-  const deps = depsFromIndex(index);
+  const applied = await installIndex(root, mrpackPath, {
+    signal,
+    previous: local,
+    label: 'Обновляем моды',
+    report: (text, extra) => stage(text, extra),
+  });
+  const { index, wanted, missing, overrides, deps } = applied;
   const state = {
     project,
     versionId,
@@ -391,4 +508,5 @@ module.exports = {
   sync,
   loadState,
   effectiveConfig,
+  installDropped,
 };

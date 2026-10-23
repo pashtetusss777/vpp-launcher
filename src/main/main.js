@@ -491,7 +491,7 @@ async function readLog(id = 'game') {
 async function pickFile(kind) {
   const filters = {
     java: [{ name: 'Java', extensions: ['exe'] }],
-    jar: [{ name: 'Моды Fabric', extensions: ['jar'] }],
+    jar: [{ name: 'Моды и сборки', extensions: ['jar', 'mrpack', 'zip'] }],
     zip: [{ name: 'Архивы', extensions: ['zip'] }],
     image: [{ name: 'Картинки', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
   }[kind];
@@ -592,6 +592,12 @@ function registerIpc() {
   handle('mods:list', async () => mods.list(gameRoot(), (await liveConfig()).minecraft));
   handle('mods:builtin', builtinMods);
   handle('mods:add', async files => mods.add(gameRoot(), (await liveConfig()).minecraft, files));
+  handle('mods:import', async file => mrpack.installDropped(
+    gameRoot(),
+    file,
+    (await liveConfig()).minecraft,
+    (text, extra) => send('mods:import', { text, ...extra }),
+  ));
   handle('mods:toggle', (file, on) => mods.setEnabled(gameRoot(), file, on));
   handle('mods:remove', file => mods.remove(gameRoot(), file));
   handle('mods:restore', token => mods.restore(gameRoot(), token));
