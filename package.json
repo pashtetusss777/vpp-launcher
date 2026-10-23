@@ -1,5 +1,5 @@
 {
-  "name": "vanilla-plus",
+  "name": "vanilla-plus-plus",
   "productName": "Vanilla++",
   "version": "1.1.6",
   "description": "Лаунчер Vanilla++ для ванильного Minecraft",
@@ -23,7 +23,7 @@
   "build": {
     "appId": "dev.vanilla.plus",
     "productName": "Vanilla++",
-    "artifactName": "VanillaPlus-${version}-${arch}.${ext}",
+    "artifactName": "VanillaPlusPlus-${version}-${arch}.${ext}",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -58,14 +58,14 @@
     "linux": {
       "icon": "build/icon.png",
       "category": "Game",
-      "executableName": "VanillaPlus",
+      "executableName": "VanillaPlusPlus",
       "target": [
         "AppImage",
         "deb",
         "pacman",
         "tar.gz"
       ],
-      "artifactName": "VanillaPlus-${version}-${arch}.${ext}"
+      "artifactName": "VanillaPlusPlus-${version}-${arch}.${ext}"
     }
   },
   "devDependencies": {

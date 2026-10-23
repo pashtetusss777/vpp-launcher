@@ -28,7 +28,7 @@ function cmp(a, b) {
 }
 
 function assetFor(assets, version) {
-  const name = (suffix) => assets.find(a => a.name === `VanillaPlus-${version}-${suffix}`);
+  const name = (suffix) => assets.find(a => a.name === `VanillaPlusPlus-${version}-${suffix}`);
   if (process.platform === 'win32') return name('portable.zip');
   if (process.platform === 'darwin') return name(process.arch === 'arm64' ? 'arm64.zip' : 'x64.zip');
   if (process.env.APPIMAGE) {

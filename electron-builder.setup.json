@@ -1,6 +1,6 @@
 {
   "appId": "dev.vanilla.plus.setup",
-  "productName": "Vanilla++ Setup",
+  "productName": "VanillaPlusPlus Setup",
   "copyright": "Vanilla++",
   "directories": {
     "output": "dist-release",
@@ -9,7 +9,7 @@
   "extraMetadata": {
     "main": "src/setup/main.js",
     "name": "vanilla-plus-setup",
-    "productName": "Vanilla++ Setup"
+    "productName": "VanillaPlusPlus Setup"
   },
   "files": [
     "src/setup/**/*",
@@ -31,9 +31,9 @@
     "target": [
       "portable"
     ],
-    "artifactName": "VanillaPlus-${version}-x64.${ext}"
+    "artifactName": "VanillaPlusPlus-${version}-x64.${ext}"
   },
   "portable": {
-    "artifactName": "VanillaPlus-${version}-x64.${ext}"
+    "artifactName": "VanillaPlusPlus-${version}-x64.${ext}"
   }
 }

@@ -2655,7 +2655,6 @@
     buildText = `Vanilla++ · ${mc}`;
     $$('[data-build]').forEach(el => el.textContent = buildText);
     renderSide();
-    $$('[data-footer]').forEach(el => el.textContent = `Vanilla++ · Minecraft ${mc}`);
     $$('[data-stack]').forEach(el => el.textContent = `Minecraft ${mc} · Fabric ${boot.config.fabricLoader}`);
     showPack(boot.pack);
   }

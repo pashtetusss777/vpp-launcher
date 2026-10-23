@@ -44,7 +44,7 @@ async function zipPayload() {
 
 async function zipPortable() {
   const unpacked = path.join(appOut, 'win-unpacked');
-  const outZip = path.join(releaseOut, `VanillaPlus-${pkg.version}-portable.zip`);
+  const outZip = path.join(releaseOut, `VanillaPlusPlus-${pkg.version}-portable.zip`);
   if (!fs.existsSync(path.join(unpacked, 'Vanilla++.exe'))) {
     throw new Error('Нет dist-app/win-unpacked/Vanilla++.exe');
   }
@@ -117,8 +117,8 @@ async function main() {
   else if (process.platform === 'linux') {
     await distUnix([
       '--linux', 'AppImage', 'deb', 'pacman', 'tar.gz',
-      '--config.productName=VanillaPlus',
-      '--config.linux.executableName=VanillaPlus',
+      '--config.productName=VanillaPlusPlus',
+      '--config.linux.executableName=VanillaPlusPlus',
     ]);
   }
   else throw new Error(`Сборка для ${process.platform} не настроена`);
