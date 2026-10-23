@@ -252,6 +252,7 @@ svg.ic, .ic svg { width: 15px; height: 15px; fill: currentColor; flex: none; }
   background: linear-gradient(transparent, rgb(var(--smoke) / .85));
   pointer-events: none;
 }
+.page[data-page="logs"]::after { display: none; }
 .pane .status { z-index: 1; }
 .pane.on { opacity: 1; transform: none; transition: opacity .38s var(--ease), transform .45s var(--ease), visibility 0s; }
 .pane-head {
@@ -887,11 +888,12 @@ body.app .window { left: 0; top: 0; transform: none; border-radius: 0; box-shado
 
 .log-view {
   flex: 1; min-height: 0; overflow: auto;
-  margin: 8px 14px 48px; padding: 10px 12px;
+  margin: 8px 14px 44px; padding: 12px 14px;
   border-radius: 10px;
-  background: rgb(0 0 0 / .28);
+  background: rgb(0 0 0 / .35);
+  box-shadow: 0 0 0 1px rgb(255 255 255 / .06) inset;
   font-family: Consolas, 'Cascadia Mono', 'Courier New', monospace;
-  font-size: 12px; line-height: 1.45;
+  font-size: 12px; line-height: 1.5;
   white-space: pre-wrap; word-break: break-word;
   color: rgb(220 220 224);
   user-select: text;
@@ -899,19 +901,27 @@ body.app .window { left: 0; top: 0; transform: none; border-radius: 0; box-shado
   cursor: text;
 }
 .log-view::-webkit-scrollbar { width: 10px; }
-.log-view::-webkit-scrollbar-thumb { background: rgb(255 255 255 / .1); border-radius: 5px; }
-.log-line { display: block; user-select: text; -webkit-user-select: text; }
-.log-line .t { color: rgb(255 255 255 / .38); }
+.log-view::-webkit-scrollbar-track { background: transparent; }
+.log-view::-webkit-scrollbar-thumb { background: rgb(255 255 255 / .14); border-radius: 5px; }
+.log-view::-webkit-scrollbar-thumb:hover { background: rgb(255 255 255 / .24); }
+.log-view ::selection {
+  background: color-mix(in srgb, rgb(var(--accent)) 45%, rgba(255, 255, 255, 0.22));
+  color: #ffffff;
+}
+.log-line { display: block; min-height: 1.5em; user-select: text; -webkit-user-select: text; }
+.log-line .t { color: rgb(255 255 255 / .40); }
 .log-line .th { color: rgb(170 196 220); }
 .log-line .lv { font-weight: 600; }
-.log-line .lv-info, .log-line .lv-debug { color: rgb(127 196 221); }
+.log-line .lv-info { color: rgb(127 196 221); }
+.log-line .lv-debug { color: #a5b4fc; }
 .log-line .lv-warn { color: var(--warn); }
 .log-line .lv-error, .log-line .lv-fatal { color: var(--bad); }
 .log-line .lv-trace { color: rgb(255 255 255 / .45); }
-.log-line.level-error, .log-line.level-fatal { background: rgb(221 127 129 / .08); }
-.log-line.level-warn { background: rgb(221 177 127 / .06); }
+.log-line.level-error, .log-line.level-fatal { background: rgb(221 127 129 / .10); border-radius: 3px; }
+.log-line.level-warn { background: rgb(221 177 127 / .08); border-radius: 3px; }
 .log-line .msg { color: rgb(235 235 240); }
-.log-line.stack { color: rgb(255 255 255 / .42); padding-left: 1.2em; }
+.log-line.stack { color: rgb(255 255 255 / .50); padding-left: 1.2em; }
+.log-line.stack.stack-head { color: var(--bad); font-weight: 500; }
 .log-empty { padding: 36px 12px; text-align: center; color: var(--dim); font-family: var(--font); font-size: 12.5px; }
 .row-icon.has-img { background: rgb(255 255 255 / .06) !important; }
 .pill.bad { background: rgb(221 127 129 / .16); color: var(--bad); }
@@ -1033,6 +1043,10 @@ body.app .window { left: 0; top: 0; transform: none; border-radius: 0; box-shado
   --accent-text: color-mix(in srgb, rgb(var(--accent)) 70%, #151518);
   --knob: #ffffff;
   --glass-a: .82;
+
+  --good: #15803d;
+  --warn: #b45309;
+  --bad: #b91c1c;
 }
 
 :root.light body {
@@ -1288,6 +1302,15 @@ body.app .window { left: 0; top: 0; transform: none; border-radius: 0; box-shado
   background: rgb(0 0 0 / .05);
 }
 
+:root.light .segmented button {
+  color: var(--soft);
+}
+
+:root.light .segmented button.on {
+  color: var(--bright);
+  font-weight: 600;
+}
+
 :root.light .seg-wash {
   background: color-mix(in srgb, rgb(var(--accent)) 25%, white);
   box-shadow: 0 0 0 1px rgb(var(--accent) / .35) inset;
@@ -1361,17 +1384,113 @@ body.app .window { left: 0; top: 0; transform: none; border-radius: 0; box-shado
 }
 
 :root.light .log-view {
-  background: rgb(0 0 0 / .05);
-  box-shadow: 0 0 0 1px rgb(0 0 0 / .07) inset;
-  color: #1a1a1f;
+  background: rgb(248 249 252 / .95);
+  box-shadow: 0 0 0 1px rgb(0 0 0 / .09) inset, 0 1px 3px rgb(0 0 0 / .03) inset;
+  color: #0f172a;
 }
 
-:root.light .log-line .t { color: rgb(0 0 0 / .45); }
-:root.light .log-line .th { color: #1e40af; }
-:root.light .log-line .lv-info, :root.light .log-line .lv-debug { color: #0284c7; }
-:root.light .log-line .lv-warn { color: #b45309; }
-:root.light .log-line .lv-error, :root.light .log-line .lv-fatal { color: #dc2626; }
-:root.light .log-line .lv-trace { color: rgb(0 0 0 / .45); }
-:root.light .log-line.level-error, :root.light .log-line.level-fatal { background: rgb(220 38 38 / .09); }
-:root.light .log-line.level-warn { background: rgb(217 119 6 / .08); }
+:root.light .log-view::-webkit-scrollbar-thumb {
+  background: rgb(0 0 0 / .16);
+  border-radius: 5px;
+}
+
+:root.light .log-view::-webkit-scrollbar-thumb:hover {
+  background: rgb(0 0 0 / .28);
+}
+
+:root.light .log-view ::selection {
+  background: color-mix(in srgb, rgb(var(--accent)) 35%, #93c5fd);
+  color: #0f172a;
+}
+
+:root.light .log-line .t {
+  color: #64748b;
+}
+
+:root.light .log-line .th {
+  color: #0369a1;
+}
+
+:root.light .log-line .lv-info {
+  color: #0284c7;
+}
+
+:root.light .log-line .lv-debug {
+  color: #4f46e5;
+}
+
+:root.light .log-line .lv-warn {
+  color: #b45309;
+}
+
+:root.light .log-line .lv-error,
+:root.light .log-line .lv-fatal {
+  color: #b91c1c;
+}
+
+:root.light .log-line .lv-trace {
+  color: #64748b;
+}
+
+:root.light .log-line.level-error,
+:root.light .log-line.level-fatal {
+  background: rgb(239 68 68 / .12);
+  border-radius: 3px;
+}
+
+:root.light .log-line.level-warn {
+  background: rgb(245 158 11 / .12);
+  border-radius: 3px;
+}
+
+:root.light .log-line .msg {
+  color: #0f172a;
+}
+
+:root.light .log-line.stack {
+  color: #334155;
+}
+
+:root.light .log-line.stack.stack-head {
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+:root.light .log-empty {
+  color: #64748b;
+}
+
+:root.light .hint {
+  color: var(--soft);
+}
+
+:root.light .hint .ic {
+  color: var(--accent-text);
+}
+
+:root.light .launch-line.error {
+  color: #b91c1c;
+}
+
+:root.light .chip-ic.good {
+  background: rgb(21 128 61 / .14);
+  color: var(--good);
+}
+
+:root.light .chip-ic.bad {
+  background: rgb(185 28 28 / .14);
+  color: var(--bad);
+}
+
+:root.light .chip-ic.warn {
+  background: rgb(180 83 9 / .14);
+  color: var(--warn);
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.38s;
+  animation-timing-function: cubic-bezier(.2, .8, .2, 1);
+}
+
 

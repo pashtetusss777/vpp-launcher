@@ -807,7 +807,8 @@
   function colorizeLogLine(raw) {
     const line = String(raw ?? '');
     if (/^\s+at\s|^\s+Caused by:|^\s+\.\.\. \d+ more|^\s*Exception|^\s*Error|^\s*java\.|^\s*net\.|^\s*com\./.test(line)) {
-      return `<span class="log-line stack">${esc(line)}</span>`;
+      const isHead = /^\s*(?:Caused by:|Exception|Error|java\.[a-zA-Z0-9_.]*(?:Exception|Error))/i.test(line);
+      return `<span class="log-line stack${isHead ? ' stack-head' : ''}">${esc(line)}</span>`;
     }
     const mc = line.match(/^\[(\d{2}:\d{2}:\d{2})\]\s+\[([^/\]]+)\/(INFO|WARN|ERROR|FATAL|DEBUG|TRACE)\]:?\s*(.*)$/i);
     if (mc) {
@@ -1915,10 +1916,21 @@
   function applyThemeMode(mode, instant) {
     currentThemeMode = mode === 'light' ? 'light' : 'dark';
     state.settings.themeMode = currentThemeMode;
-    document.documentElement.classList.toggle('light', currentThemeMode === 'light');
-    const seg = $('#themeMode');
-    if (seg) setSeg(seg, currentThemeMode);
-    setAccent(accentNow, instant);
+
+    const updateDOM = () => {
+      document.documentElement.classList.toggle('light', currentThemeMode === 'light');
+      const seg = $('#themeMode');
+      if (seg) setSeg(seg, currentThemeMode);
+      setAccent(accentNow, true);
+    };
+
+    if (!instant && typeof document.startViewTransition === 'function') {
+      document.startViewTransition(() => {
+        updateDOM();
+      });
+    } else {
+      updateDOM();
+    }
   }
   const themeModeSeg = $('#themeMode');
   if (themeModeSeg) {
@@ -1926,6 +1938,7 @@
       const b = e.target.closest('button');
       if (!b) return;
       const mode = b.dataset.v;
+      if (mode === currentThemeMode) return;
       applyThemeMode(mode, false);
       save({ themeMode: mode });
       status('settings', 'palette', `Тема - ${mode === 'light' ? 'светлая' : 'тёмная'}`, 'good');
