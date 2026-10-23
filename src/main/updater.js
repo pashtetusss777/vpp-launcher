@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const fsp = require('fs/promises');
+const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const { Readable, Transform } = require('stream');
@@ -105,8 +106,39 @@ async function findApp(dir, depth = 0) {
 }
 
 function spawnLater(command, args) {
-  const child = spawn(command, args, { detached: true, stdio: 'ignore', windowsHide: true });
+  const child = spawn(command, args, {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+    cwd: os.tmpdir(),
+  });
   child.unref();
+}
+
+async function sweep(dir, keepName) {
+  let names = [];
+  try { names = await fsp.readdir(dir); } catch { return; }
+  await Promise.all(names.map(async name => {
+    if (keepName && name === keepName) return;
+    await fsp.rm(path.join(dir, name), { recursive: true, force: true }).catch(() => {});
+  }));
+}
+
+async function freshDir(parent, name) {
+  const dir = path.join(parent, name);
+  await fsp.rm(dir, { recursive: true, force: true }).catch(() => {});
+  try {
+    await fsp.mkdir(dir);
+    return dir;
+  } catch {
+    const alt = path.join(parent, `${name}-${Date.now()}`);
+    await fsp.mkdir(alt, { recursive: true });
+    return alt;
+  }
+}
+
+function batQuote(p) {
+  return String(p).replace(/%/g, '%%');
 }
 
 async function canWrite(dir) {
@@ -119,25 +151,43 @@ async function canWrite(dir) {
 }
 
 async function scheduleReplace(file, info) {
-  const work = path.join(path.dirname(file), 'unpack');
-  await fsp.rm(work, { recursive: true, force: true });
-  await fsp.mkdir(work, { recursive: true });
+  const cache = path.dirname(file);
+  const work = await freshDir(cache, 'unpack');
 
   if (process.platform === 'win32') {
     await extract(file, work);
     const inner = path.join(work, 'Vanilla++');
     const source = fs.existsSync(path.join(inner, 'Vanilla++.exe')) ? inner : work;
     const install = path.dirname(process.execPath);
-    const script = path.join(path.dirname(file), 'apply.cmd');
+    const script = path.join(os.tmpdir(), `vanilla-plus-update-${process.pid}.cmd`);
     const exe = path.join(install, 'Vanilla++.exe');
     await fsp.writeFile(script, [
       '@echo off',
-      'timeout /t 2 /nobreak >nul',
-      `robocopy "${source}" "${install}" /E /NFL /NDL /NJH /NJS /nc /ns /np`,
-      `start "" "${exe}"`,
-      'del "%~f0"',
+      'set /a N=0',
+      ':wait',
+      `tasklist /FI "PID eq ${process.pid}" 2>nul | find "${process.pid}" >nul`,
+      'if errorlevel 1 goto copy',
+      'set /a N+=1',
+      'if %N% GEQ 40 goto copy',
+      'ping -n 2 127.0.0.1 >nul',
+      'goto wait',
+      ':copy',
+      'ping -n 3 127.0.0.1 >nul',
+      `robocopy "${batQuote(source)}" "${batQuote(install)}" /E /R:1 /W:1 /NFL /NDL /NJH /NJS /nc /ns /np`,
+      `start "" "${batQuote(exe)}"`,
+      ':cleanup',
+      'set /a N=0',
+      ':wipe',
+      `rmdir /s /q "${batQuote(cache)}"`,
+      `if not exist "${batQuote(cache)}" goto done`,
+      'set /a N+=1',
+      'if %N% GEQ 10 goto done',
+      'ping -n 2 127.0.0.1 >nul',
+      'goto wipe',
+      ':done',
+      '(goto) 2>nul & del "%~f0"',
     ].join('\r\n'), 'utf8');
-    spawnLater('cmd.exe', ['/c', 'start', '', '/min', script]);
+    spawnLater('cmd.exe', ['/d', '/c', script]);
     return { restart: true };
   }
 
@@ -146,13 +196,15 @@ async function scheduleReplace(file, info) {
     const next = await findApp(work);
     const current = path.resolve(process.execPath, '..', '..', '..');
     if (!next || !current.endsWith('.app')) throw new Error('Не нашёл приложение в обновлении');
-    const script = path.join(path.dirname(file), 'apply.sh');
+    const script = path.join(os.tmpdir(), `vanilla-plus-update-${process.pid}.sh`);
     await fsp.writeFile(script, [
       '#!/bin/sh',
       'sleep 2',
       `rm -rf ${JSON.stringify(current)}`,
       `mv ${JSON.stringify(next)} ${JSON.stringify(current)}`,
       `open ${JSON.stringify(current)}`,
+      `rm -rf ${JSON.stringify(cache)}`,
+      'rm -f "$0"',
     ].join('\n'), 'utf8');
     await fsp.chmod(script, 0o755);
     spawnLater('/bin/sh', ['-c', `nohup /bin/sh ${JSON.stringify(script)} >/dev/null 2>&1 &`]);
@@ -161,13 +213,15 @@ async function scheduleReplace(file, info) {
 
   if (process.env.APPIMAGE && info.name.endsWith('.AppImage')) {
     const target = process.env.APPIMAGE;
-    const script = path.join(path.dirname(file), 'apply.sh');
+    const script = path.join(os.tmpdir(), `vanilla-plus-update-${process.pid}.sh`);
     await fsp.writeFile(script, [
       '#!/bin/sh',
       'sleep 2',
       `mv ${JSON.stringify(file)} ${JSON.stringify(target)}`,
       `chmod +x ${JSON.stringify(target)}`,
       `${JSON.stringify(target)} >/dev/null 2>&1 &`,
+      `rm -rf ${JSON.stringify(cache)}`,
+      'rm -f "$0"',
     ].join('\n'), 'utf8');
     await fsp.chmod(script, 0o755);
     spawnLater('/bin/sh', ['-c', `nohup /bin/sh ${JSON.stringify(script)} >/dev/null 2>&1 &`]);
@@ -180,7 +234,7 @@ async function scheduleReplace(file, info) {
     const names = await fsp.readdir(work);
     const only = names.length === 1 ? path.join(work, names[0]) : work;
     const source = (await fsp.stat(only)).isDirectory() ? only : work;
-    const script = path.join(path.dirname(file), 'apply.sh');
+    const script = path.join(os.tmpdir(), `vanilla-plus-update-${process.pid}.sh`);
     const exe = process.execPath;
     await fsp.writeFile(script, [
       '#!/bin/sh',
@@ -188,6 +242,8 @@ async function scheduleReplace(file, info) {
       `cp -a ${JSON.stringify(source)}/. ${JSON.stringify(install)}/`,
       `chmod +x ${JSON.stringify(exe)}`,
       `${JSON.stringify(exe)} >/dev/null 2>&1 &`,
+      `rm -rf ${JSON.stringify(cache)}`,
+      'rm -f "$0"',
     ].join('\n'), 'utf8');
     await fsp.chmod(script, 0o755);
     spawnLater('/bin/sh', ['-c', `nohup /bin/sh ${JSON.stringify(script)} >/dev/null 2>&1 &`]);
@@ -213,6 +269,8 @@ async function install(config, onProgress) {
   const info = pending || await latest(config);
   if (!info) throw new Error('Обновление не найдено');
   const dir = path.join(app.getPath('userData'), 'updates');
+  await fsp.mkdir(dir, { recursive: true });
+  await sweep(dir);
   onProgress?.({ stage: 'download', done: 0, total: info.size || 1, version: info.version });
   const file = await download(info, dir, p => onProgress?.({ stage: 'download', ...p, version: info.version }));
   onProgress?.({ stage: 'apply', version: info.version });
