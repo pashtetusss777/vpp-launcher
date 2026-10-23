@@ -93,34 +93,36 @@ async function list(root, kind) {
   const dir = contentDir(root, kind);
   await fsp.mkdir(dir, { recursive: true });
   const names = await fsp.readdir(dir);
-  const enabled = kind === 'resourcepack' ? await enabledPacks(root) : null;
-  const shader = kind === 'shader' ? await activeShader(root) : '';
-  const items = [];
-  for (const name of names) {
-    if (name.startsWith('.')) continue;
+  const [enabled, shader] = await Promise.all([
+    kind === 'resourcepack' ? enabledPacks(root) : Promise.resolve(null),
+    kind === 'shader' ? activeShader(root) : Promise.resolve(''),
+  ]);
+  const results = await Promise.all(names.map(async name => {
+    if (name.startsWith('.')) return null;
     const file = path.join(dir, name);
     let stat;
     try {
       stat = await fsp.stat(file);
-    } catch { continue; }
+    } catch { return null; }
     const isDir = stat.isDirectory();
-    if (!isDir && !/\.zip$/i.test(name)) continue;
+    if (!isDir && !/\.zip$/i.test(name)) return null;
     if (isDir && kind === 'resourcepack') {
       try {
         await fsp.access(path.join(file, 'pack.mcmeta'));
-      } catch { continue; }
+      } catch { return null; }
     }
     const meta = kind === 'resourcepack' ? await packMeta(file, isDir) : {};
     const label = name.replace(/\.zip$/i, '');
-    items.push({
+    return {
       file: name,
       name: label,
       description: meta.description || (isDir ? 'Папка' : name),
       enabled: kind === 'shader' ? shader === name : enabled.has(name),
       size: isDir ? 0 : stat.size,
       folder: isDir,
-    });
-  }
+    };
+  }));
+  const items = results.filter(Boolean);
   return items.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
 }
 

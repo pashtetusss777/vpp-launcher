@@ -46,9 +46,11 @@ async function resolve(address) {
   const { host, port } = parseAddress(address);
   if (port) return { host, port };
   try {
-    const [srv] = await dns.resolveSrv(`_minecraft._tcp.${host}`);
+    const srvPromise = dns.resolveSrv(`_minecraft._tcp.${host}`);
+    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('dns timeout')), 2500));
+    const [srv] = await Promise.race([srvPromise, timeoutPromise]);
     if (srv) return { host: srv.name, port: srv.port, shownHost: host };
-  } catch { /* no SRV record: the plain address */ }
+  } catch { /* no SRV record or timeout: the plain address */ }
   return { host, port: 25565 };
 }
 

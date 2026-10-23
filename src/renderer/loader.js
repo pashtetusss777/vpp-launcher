@@ -125,6 +125,7 @@
   // ------------------------------------------------------------------ state
 
   let boot = null;
+  let phase = 'idle';
   const state = {
     page: 'home',
     nick: '',
@@ -405,7 +406,7 @@
   function frame(now) {
     const dt = Math.min(.05, (now - last) / 1000);
     last = now;
-    if (!document.hidden) {
+    if (!document.hidden && phase !== 'running') {
       clock += dt;
       const k = 1 - Math.exp(-3.2 * dt);
       curX += (aimX - curX) * k;
@@ -879,7 +880,7 @@
   function armLogPoll() {
     clearInterval(logState.timer);
     logState.timer = setInterval(() => {
-      if (state.page === 'logs') loadLogs({ quiet: true });
+      if (state.page === 'logs' && !document.hidden) loadLogs({ quiet: true });
     }, 2500);
   }
 
@@ -1769,7 +1770,7 @@
     ramInfo();
   }
   // what is free changes; while the settings are open, keep it current
-  setInterval(() => { if (state.page === 'settings') readMemory(); }, 4000);
+  setInterval(() => { if (state.page === 'settings' && !document.hidden) readMemory(); }, 4000);
 
   // ------------------------------------------------------------------ switches, inputs, segmented, theme
 
@@ -2396,7 +2397,7 @@
 
   const play = $('#play'), playFill = $('#playFill'), playLabel = $('#playLabel'), playPct = $('#playPct');
   const playIcon = $('#playIcon'), launchLine = $('#launchLine');
-  let phase = 'idle', runTimer = null, runStart = 0, runServer = null, stopArmed = 0, speed = null;
+  let runTimer = null, runStart = 0, runServer = null, stopArmed = 0, speed = null;
 
   function setLine(html, kind = '') {
     launchLine.className = 'launch-line' + (kind ? ' ' + kind : '');
@@ -2646,6 +2647,37 @@
     renderServers();
     pingServers();
     showBuild();
+
+    if (boot.state.phase === 'running') running(boot.state);
+    else if (boot.state.phase === 'busy') busy();
+    else idleLine();
+    showLauncherUpdate(boot.update);
+
+    // Asynchronously load shelf items in background without blocking launcher UI
+    const initShelves = async () => {
+      try {
+        await loadMods();
+        modsSignature = signature();
+        if (state.page === 'mods') renderMods();
+        else countMods();
+      } catch (e) {
+        console.warn('Failed to load mods:', e);
+      }
+      try {
+        await loadShelf('packs');
+        if (state.page === 'packs') renderShelf('packs');
+      } catch (e) {
+        console.warn('Failed to load packs:', e);
+      }
+      try {
+        await loadShelf('shaders');
+        if (state.page === 'shaders') renderShelf('shaders');
+      } catch (e) {
+        console.warn('Failed to load shaders:', e);
+      }
+    };
+    initShelves();
+
     api.pack.onStatus(pack => {
       boot.pack = pack;
       if (pack.minecraft) boot.config.minecraft = pack.minecraft;
@@ -2659,16 +2691,16 @@
       }).catch(() => {});
     }
 
-    await loadMods();
-    modsSignature = signature();
-    renderMods();
-    await loadShelf('packs');
-    await loadShelf('shaders');
+    api.update.check().then(update => {
+      if (update) showLauncherUpdate(update);
+    }).catch(() => {});
 
-    if (boot.state.phase === 'running') running(boot.state);
-    else if (boot.state.phase === 'busy') busy();
-    else idleLine();
-    showLauncherUpdate(boot.update);
+    api.auth.onAccountsUpdated?.(accounts => {
+      state.accounts = accounts.map(a => ({ ...a }));
+      const current = state.accounts.some(a => a.id === state.accountId) ? state.accountId : (state.accounts[0]?.id || '');
+      setCurrent(current, { pop: false });
+      renderAccounts();
+    });
 
     const updateBanner = $('#updateBanner');
     if (updateBanner) {

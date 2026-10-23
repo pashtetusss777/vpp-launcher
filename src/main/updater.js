@@ -41,21 +41,30 @@ function assetFor(assets, version) {
 async function latest(config) {
   const repo = repoOf(config);
   if (!repo || !app.isPackaged) return null;
-  const res = await fetchWithRetry(`https://api.github.com/repos/${repo}/releases/latest`, {
-    headers: { Accept: 'application/vnd.github+json' },
-  });
-  const data = await res.json();
-  const version = String(data.tag_name || '').replace(/^v/, '');
-  if (!version || cmp(version, VERSION) <= 0) return null;
-  const asset = assetFor(data.assets || [], version);
-  if (!asset?.browser_download_url) return null;
-  return {
-    version,
-    name: asset.name,
-    url: asset.browser_download_url,
-    size: asset.size || 0,
-    notes: String(data.body || '').slice(0, 500),
-  };
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 6000);
+  try {
+    const res = await fetchWithRetry(`https://api.github.com/repos/${repo}/releases/latest`, {
+      headers: { Accept: 'application/vnd.github+json' },
+      signal: abort.signal,
+    }, 2);
+    const data = await res.json();
+    const version = String(data.tag_name || '').replace(/^v/, '');
+    if (!version || cmp(version, VERSION) <= 0) return null;
+    const asset = assetFor(data.assets || [], version);
+    if (!asset?.browser_download_url) return null;
+    return {
+      version,
+      name: asset.name,
+      url: asset.browser_download_url,
+      size: asset.size || 0,
+      notes: String(data.body || '').slice(0, 500),
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function download(info, dir, onProgress) {
