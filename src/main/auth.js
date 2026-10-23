@@ -288,6 +288,86 @@ async function withSkin(account) {
   }
 }
 
+function inspectSkin(buf) {
+  const { nativeImage } = require('electron');
+  const img = nativeImage.createFromBuffer(buf);
+  if (img.isEmpty()) throw new Error('Это не картинка PNG');
+  const { width, height } = img.getSize();
+  if (width !== 64 || (height !== 64 && height !== 32)) throw new Error('Скин должен быть PNG 64×64');
+  if (height === 32) return 'classic';
+  // Slim leaves the outer column of the right arm empty.
+  const alpha = img.toBitmap()[(16 * width + 47) * 4 + 3];
+  return alpha < 16 ? 'slim' : 'classic';
+}
+
+function skinFail(data, status, who) {
+  if (status === 401 || status === 403) return `Сессия ${who} истекла — войдите ещё раз`;
+  if (status === 429) return `${who} просит подождать минуту`;
+  const msg = String(data?.errorMessage || data?.error || data?.message || '');
+  if (/png|skin|image|variant/i.test(msg)) return 'Файл не похож на скин Minecraft (PNG 64×64)';
+  return msg ? msg.slice(0, 180) : `${who} не принял скин (${status})`;
+}
+
+function bustSkin(url) {
+  const clean = httpsUrl(url);
+  if (!clean) return '';
+  return `${clean.split('?')[0]}?v=${Date.now()}`;
+}
+
+async function postSkin(account, buf, variant) {
+  const slim = variant === 'slim';
+  const form = new FormData();
+  const bytes = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+  form.append('file', new Blob([bytes], { type: 'image/png' }), 'skin.png');
+  let url;
+  if (account.type === 'microsoft') {
+    form.append('variant', slim ? 'slim' : 'classic');
+    url = 'https://api.minecraftservices.com/minecraft/profile/skins';
+  } else {
+    form.append('model', slim ? 'slim' : 'default');
+    form.append('name', account.name);
+    url = 'https://skinsystem.ely.by/api/skins';
+  }
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${account.accessToken}`, Accept: 'application/json' },
+    body: form,
+  });
+  const data = await readBody(res);
+  if (!res.ok) {
+    const err = new Error(skinFail(data, res.status, account.type === 'ely' ? 'Ely.by' : 'Minecraft'));
+    err.status = res.status;
+    throw err;
+  }
+  if (account.type === 'microsoft') {
+    const active = (data.skins || []).find(s => s.state === 'ACTIVE') || (data.skins || [])[0];
+    return {
+      ...account,
+      name: data.name || account.name,
+      skinUrl: bustSkin(active?.url) || account.skinUrl,
+    };
+  }
+  const elyUrl = data.url || data.skin || `https://skinsystem.ely.by/skins/${encodeURIComponent(account.name)}.png`;
+  return { ...account, skinUrl: bustSkin(elyUrl) };
+}
+
+async function uploadSkin(account, file) {
+  if (!account || (account.type !== 'microsoft' && account.type !== 'ely')) {
+    throw new Error('Сменить скин можно у лицензии Microsoft и у Ely.by');
+  }
+  const buf = await fsp.readFile(file);
+  if (!buf.length || buf.length > 512 * 1024) throw new Error('Файл скина пустой или слишком большой');
+  const variant = inspectSkin(buf);
+  let fresh = await freshen(account);
+  try {
+    return await postSkin(fresh, buf, variant);
+  } catch (e) {
+    if (e.status !== 401 && e.status !== 403) throw e;
+    fresh = fresh.type === 'ely' ? await refreshEly(fresh) : await refreshMicrosoft(fresh);
+    return postSkin(fresh, buf, variant);
+  }
+}
+
 async function freshen(account) {
   if (!account || account.type === 'offline' || !account.type) return account;
   let next = account;
@@ -323,4 +403,4 @@ async function ensureAuthlib(root, signal) {
   return file;
 }
 
-module.exports = { loginEly, loginMicrosoft, freshen, ensureAuthlib, dashed, withSkin };
+module.exports = { loginEly, loginMicrosoft, freshen, ensureAuthlib, dashed, withSkin, uploadSkin };

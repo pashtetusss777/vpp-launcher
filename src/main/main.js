@@ -494,6 +494,7 @@ async function pickFile(kind) {
     jar: [{ name: 'Моды и сборки', extensions: ['jar', 'mrpack', 'zip'] }],
     zip: [{ name: 'Архивы', extensions: ['zip'] }],
     image: [{ name: 'Картинки', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
+    skin: [{ name: 'Скин Minecraft', extensions: ['png'] }],
   }[kind];
   const result = await dialog.showOpenDialog(win, {
     properties: kind === 'jar' || kind === 'zip' ? ['openFile', 'multiSelections'] : ['openFile'],
@@ -648,6 +649,25 @@ function registerIpc() {
     });
   });
   handle('auth:microsoft-cancel', () => msAbort?.abort());
+  handle('skin:image', async url => {
+    let parsed;
+    try { parsed = new URL(String(url || '')); } catch { throw new Error('Некорректная ссылка на скин'); }
+    const host = parsed.hostname;
+    const allowed = host === 'textures.minecraft.net' || host === 'skinsystem.ely.by' || host.endsWith('.ely.by');
+    if (parsed.protocol !== 'https:' || !allowed) throw new Error('Этот адрес скина нельзя загрузить');
+    const res = await fetch(parsed.href);
+    if (!res.ok) throw new Error('Скин не скачался');
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length > 1024 * 1024) throw new Error('Скин слишком большой');
+    return `data:image/png;base64,${buf.toString('base64')}`;
+  });
+  handle('auth:skin', async file => {
+    const account = currentAccount(settings.get());
+    if (!account || (account.type !== 'microsoft' && account.type !== 'ely')) {
+      throw new Error('Сменить скин можно у лицензии Microsoft и у Ely.by');
+    }
+    return rememberAccount(await auth.uploadSkin(account, file));
+  });
   handle('window:minimize', () => win?.minimize());
   handle('window:close', () => {
     session.abort?.abort();

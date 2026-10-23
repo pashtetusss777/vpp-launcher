@@ -253,7 +253,12 @@
               <div class="current-nick" data-nick>-</div>
               <div class="current-sub" id="currentKind">Добавьте аккаунт, чтобы играть</div>
             </div>
+            <button class="btn wash small" id="skinChange" hidden title="PNG 64×64. Обычная модель или тонкие руки определятся по файлу"><svg class="ic"><use href="#i-image"/></svg>Скин</button>
             <button class="btn wash small" id="copyUuid" title="UUID, под которым вас видит сервер"><svg class="ic"><use href="#i-copy"/></svg><span id="uuidShort">UUID</span></button>
+          </div>
+          <div class="skin-stage st" style="--i:2">
+            <canvas id="skinStage" width="640" height="440"></canvas>
+            <div class="skin-stage-hint">Потяните, чтобы повернуть</div>
           </div>
 
           <div class="segmented acc-kind st" style="--i:2" id="accKind">
@@ -503,6 +508,7 @@
   </div>
 </div>
 
+<script src="skin3d.js"></script>
 <script src="loader.js"></script>
 </body>
 </html>

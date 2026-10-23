@@ -30,20 +30,48 @@ async function removeLinks() {
 
 function scheduleWipe(extraDirs) {
   const install = installDir();
+  const targets = [install];
+  for (const dir of extraDirs) {
+    if (dir && path.resolve(dir) !== path.resolve(install)) targets.push(dir);
+  }
   const lines = [
     '@echo off',
-    'timeout /t 2 /nobreak >nul',
+    `taskkill /f /pid ${process.pid} >nul 2>&1`,
     'taskkill /f /im "Vanilla++.exe" >nul 2>&1',
-    'timeout /t 1 /nobreak >nul',
-    `rmdir /s /q ${quote(install)}`,
+    'set /a N=0',
+    ':wait',
+    `tasklist /FI "PID eq ${process.pid}" 2>nul | find "${process.pid}" >nul`,
+    'if errorlevel 1 goto wipe',
+    'set /a N+=1',
+    'if %N% GEQ 30 goto wipe',
+    'ping -n 2 127.0.0.1 >nul',
+    'goto wait',
+    ':wipe',
+    'ping -n 2 127.0.0.1 >nul',
   ];
-  for (const dir of extraDirs) {
-    if (dir && path.resolve(dir) !== path.resolve(install)) lines.push(`rmdir /s /q ${quote(dir)}`);
+  for (const dir of targets) {
+    const tag = lines.length;
+    const q = quote(dir).replace(/%/g, '%%');
+    lines.push(
+      'set /a N=0',
+      `:rm${tag}`,
+      `rmdir /s /q ${q}`,
+      `if not exist ${q} goto next${tag}`,
+      'set /a N+=1',
+      `if %N% GEQ 15 goto next${tag}`,
+      'ping -n 2 127.0.0.1 >nul',
+      `goto rm${tag}`,
+      `:next${tag}`,
+    );
   }
+  lines.push('(goto) 2>nul & del "%~f0"');
   const script = path.join(app.getPath('temp'), 'vanilla-plus-uninstall.cmd');
   fs.writeFileSync(script, lines.join('\r\n'), 'utf8');
-  spawn('cmd.exe', ['/c', 'start', '', '/min', script], {
-    detached: true, stdio: 'ignore', windowsHide: true,
+  spawn('cmd.exe', ['/d', '/c', script], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+    cwd: app.getPath('temp'),
   }).unref();
 }
 

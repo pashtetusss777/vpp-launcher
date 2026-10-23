@@ -1484,6 +1484,12 @@
     else if (acc.type === 'microsoft') kind.textContent = 'Microsoft · лицензия Minecraft';
     else if (acc.type === 'ely') kind.textContent = 'Ely.by · сессия этого лаунчера';
     else kind.textContent = `Офлайн · скин «${SKIN_NAMES[skinOf(state.nick || 'Steve')]}»`;
+    const skinBtn = $('#skinChange');
+    if (skinBtn) skinBtn.hidden = !(acc && (acc.type === 'microsoft' || acc.type === 'ely'));
+    if (window.skinView) {
+      const nick = state.nick || 'Steve';
+      window.skinView.show(acc?.skinUrl || '', `assets/skins/${skinOf(nick)}.png`);
+    }
     const uuid = acc?.uuid || (state.nick ? uuidString(state.nick) : '');
     $('#uuidShort').textContent = uuid ? uuid.slice(0, 8) + '…' : 'UUID';
     $('#copyUuid').dataset.uuid = uuid;
@@ -1615,6 +1621,25 @@
         nickWell.animate([{ background: 'rgb(var(--accent) / .3)' }, {}], { duration: 700, easing: 'ease-out' });
       }
     })(start);
+  });
+
+  $('#skinChange').addEventListener('click', async () => {
+    const acc = state.accounts.find(a => a.id === state.accountId);
+    if (!acc || (acc.type !== 'microsoft' && acc.type !== 'ely')) return;
+    const [file] = await api.pick('skin');
+    if (!file) return;
+    const btn = $('#skinChange');
+    btn.disabled = true;
+    holdStatus('accounts', 'download', 'Меняем скин…');
+    try {
+      const next = await api.auth.skin(file);
+      upsertAccount(next);
+      status('accounts', 'check', `Скин ${next.name} обновлён`, 'good');
+    } catch (e) {
+      status('accounts', 'warn', e.message, 'warn');
+    } finally {
+      btn.disabled = false;
+    }
   });
 
   $('#copyUuid').addEventListener('click', e => {

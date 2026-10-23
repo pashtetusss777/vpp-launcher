@@ -564,6 +564,24 @@ svg.ic, .ic svg { width: 15px; height: 15px; fill: currentColor; flex: none; }
 .current-text { flex: 1; min-width: 0; }
 .current-nick { margin-top: 3px; font-family: var(--font-title); font-size: 22px; font-weight: 500; color: rgb(255 255 255 / .96); }
 .current-sub { margin-top: 2px; font-size: 11.5px; color: var(--dim); }
+.skin-stage {
+  position: relative; height: 240px; margin-top: 12px;
+  border-radius: 14px; overflow: hidden;
+  background:
+    radial-gradient(120px 80px at 50% 42%, rgb(var(--accent) / .16), transparent 70%),
+    rgb(255 255 255 / .04);
+}
+.skin-stage canvas { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+.skin-stage canvas:active { cursor: grabbing; }
+.skin-stage-hint {
+  position: absolute; left: 0; right: 0; bottom: 8px;
+  text-align: center; font-size: 11px; color: var(--dim); pointer-events: none;
+}
+:root.light .skin-stage {
+  background:
+    radial-gradient(120px 80px at 50% 42%, rgb(var(--accent) / .2), transparent 70%),
+    rgb(0 0 0 / .04);
+}
 
 .add-row { margin-top: 14px; display: flex; gap: 8px; }
 .well.nick { padding-left: 9px; }

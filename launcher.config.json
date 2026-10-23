@@ -2,9 +2,9 @@
   "minecraft": "26.2",
   "fabricLoader": "0.20.1",
   "fabricApi": "0.161.0+26.2",
-  "gameDirName": ".vanilla-plus",
+  "gameDirName": ".vanilla-plus-plus",
   "pack": {
-    "modrinthProject": "fabulously-optimized",
+    "modrinthProject": "optimizedproject",
     "comment": "Slug или id модпака на Modrinth. Пусто = автообновление сборки выключено."
   },
   "updates": {
@@ -23,7 +23,7 @@
   },
   "news": {
     "title": "Что нового",
-    "tag": "1.1.6",
+    "tag": "1.1.7",
     "items": [
       [
         "Оформление",
@@ -40,6 +40,10 @@
       [
         "Поддержка .mrpack и .zip модпаков",
         "Теперь модпаки можно устанавливать из файлов :3"
+      ],
+      [
+        "Возможность менять скин прямо в лаунчере",
+        "Теперь можно менять скин прямо в лаунчере"
       ]
     ]
   },

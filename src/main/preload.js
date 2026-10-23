@@ -70,8 +70,10 @@ contextBridge.exposeInMainWorld('vanilla', {
   setBackground: file => call('background:set', file),
   ping: address => call('ping', address),
   pathOf: file => webUtils.getPathForFile(file),
+  skinImage: url => call('skin:image', url),
   auth: {
     ely: (username, password) => call('auth:ely', username, password),
+    skin: file => call('auth:skin', file),
     microsoft: () => call('auth:microsoft'),
     microsoftCancel: () => call('auth:microsoft-cancel'),
     onDevice: fn => on('auth:device', fn),
