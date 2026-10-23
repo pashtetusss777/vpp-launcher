@@ -9,7 +9,7 @@
     "name": "Vanilla++",
     "email": "pashtetusss777@users.noreply.github.com"
   },
-  "license": "UNLICENSED",
+  "license": "GPL-3.0-only",
   "scripts": {
     "start": "electron .",
     "setup": "electron src/setup/main.js",
