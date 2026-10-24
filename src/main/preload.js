@@ -64,7 +64,10 @@ contextBridge.exposeInMainWorld('vanilla', {
   },
   logs: {
     read: id => call('logs:read', id),
+    follow: id => call('logs:follow', id),
+    stop: () => call('logs:stop'),
     open: id => call('logs:open', id),
+    onChunk: fn => on('logs:chunk', fn),
   },
   pick: kind => call('pick', kind),
   setBackground: file => call('background:set', file),

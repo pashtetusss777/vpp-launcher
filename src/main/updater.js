@@ -115,6 +115,17 @@ function spawnLater(command, args) {
   child.unref();
 }
 
+// cmd.exe is a console program. Detached from the launcher it opens its own window,
+// and windowsHide does not stop that. wscript is a windowed program and starts cmd hidden.
+function spawnHiddenCmd(script) {
+  const vbs = script.replace(/\.cmd$/i, '.vbs');
+  const run = `cmd.exe /d /c ""${String(script).replace(/"/g, '""')}""`;
+  fs.writeFileSync(vbs, `CreateObject("Wscript.Shell").Run "${run}", 0, False\r\n`, 'utf8');
+  const host = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'wscript.exe');
+  spawnLater(host, ['//B', '//Nologo', vbs]);
+  return vbs;
+}
+
 async function sweep(dir, keepName) {
   let names = [];
   try { names = await fsp.readdir(dir); } catch { return; }
@@ -160,6 +171,7 @@ async function scheduleReplace(file, info) {
     const source = fs.existsSync(path.join(inner, 'Vanilla++.exe')) ? inner : work;
     const install = path.dirname(process.execPath);
     const script = path.join(os.tmpdir(), `vanilla-plus-update-${process.pid}.cmd`);
+    const vbs = script.replace(/\.cmd$/i, '.vbs');
     const exe = path.join(install, 'Vanilla++.exe');
     await fsp.writeFile(script, [
       '@echo off',
@@ -185,9 +197,10 @@ async function scheduleReplace(file, info) {
       'ping -n 2 127.0.0.1 >nul',
       'goto wipe',
       ':done',
+      `del /q "${batQuote(vbs)}"`,
       '(goto) 2>nul & del "%~f0"',
     ].join('\r\n'), 'utf8');
-    spawnLater('cmd.exe', ['/d', '/c', script]);
+    spawnHiddenCmd(script);
     return { restart: true };
   }
 

@@ -484,7 +484,101 @@ async function readLog(id = 'game') {
     empty: !slice.length,
     text: slice.join('\n'),
     lineCount: slice.length,
+    size,
   };
+}
+
+const logFollow = { id: '', file: '', offset: 0, pending: '', timer: null, watcher: null, gen: 0 };
+
+function stopLogFollow() {
+  logFollow.gen += 1;
+  clearTimeout(logFollow.timer);
+  logFollow.timer = null;
+  try { logFollow.watcher?.close(); } catch { /* already closed */ }
+  logFollow.watcher = null;
+  logFollow.pending = '';
+  logFollow.id = '';
+  logFollow.file = '';
+}
+
+function scheduleLogPump() {
+  clearTimeout(logFollow.timer);
+  logFollow.timer = setTimeout(() => { pumpLog().catch(() => {}); }, 30);
+}
+
+function watchLogFile() {
+  try { logFollow.watcher?.close(); } catch { /* already closed */ }
+  const file = logFollow.file;
+  const base = path.basename(file);
+  const dir = path.dirname(file);
+  const onDir = (_event, name) => {
+    if (name && name !== base) return;
+    watchLogFile();
+    scheduleLogPump();
+  };
+  try {
+    logFollow.watcher = fs.watch(file, scheduleLogPump);
+    logFollow.watcher.on('error', () => { logFollow.watcher = null; try { logFollow.watcher = fs.watch(dir, onDir); } catch { /* dir missing */ } });
+  } catch {
+    try { logFollow.watcher = fs.watch(dir, onDir); } catch { /* logs folder is not there yet */ }
+  }
+}
+
+function takeLogLines(id, text) {
+  logFollow.pending += text;
+  const buf = logFollow.pending;
+  if (id === 'output' && buf.includes('<log4j:')) {
+    const end = buf.lastIndexOf('</log4j:Event>');
+    if (end < 0) return '';
+    const cut = end + '</log4j:Event>'.length;
+    logFollow.pending = buf.slice(cut);
+    return flattenLog4j(buf.slice(0, cut));
+  }
+  const nl = buf.lastIndexOf('\n');
+  if (nl < 0) return '';
+  logFollow.pending = buf.slice(nl + 1);
+  return buf.slice(0, nl + 1);
+}
+
+async function pumpLog() {
+  const gen = logFollow.gen;
+  const { file, id } = logFollow;
+  if (!file || !id) return;
+  let stat;
+  try { stat = await fsp.stat(file); } catch { return; }
+  if (gen !== logFollow.gen) return;
+  if (stat.size < logFollow.offset) {
+    logFollow.offset = 0;
+    logFollow.pending = '';
+    const data = await readLog(id);
+    if (gen !== logFollow.gen) return;
+    logFollow.offset = data.size || 0;
+    watchLogFile();
+    send('logs:chunk', { id, reset: true, text: data.text || '' });
+    return;
+  }
+  if (stat.size === logFollow.offset) return;
+  const start = logFollow.offset;
+  const len = Math.min(stat.size - start, 128 * 1024);
+  const buf = Buffer.alloc(len);
+  const handle = await fsp.open(file, 'r');
+  try { await handle.read(buf, 0, len, start); } finally { await handle.close(); }
+  if (gen !== logFollow.gen) return;
+  logFollow.offset = start + len;
+  const text = takeLogLines(id, decodeLogText(buf));
+  if (text) send('logs:chunk', { id, text });
+  if (logFollow.offset < stat.size) scheduleLogPump();
+}
+
+async function followLog(id) {
+  stopLogFollow();
+  const data = await readLog(id);
+  const pick = logSources(gameRoot()).find(s => s.id === data.id) || logSources(gameRoot())[0];
+  logFollow.id = data.id;
+  logFollow.file = pick.file;
+  logFollow.offset = data.size || 0;
+  watchLogFile();
+  return data;
 }
 
 async function pickFile(kind) {
@@ -626,6 +720,8 @@ function registerIpc() {
   handle('open:path', which => openPath(which));
   handle('open:log', openLog);
   handle('logs:read', id => readLog(id));
+  handle('logs:follow', id => followLog(id));
+  handle('logs:stop', () => { stopLogFollow(); return true; });
   handle('logs:open', async id => {
     const pick = logSources(gameRoot()).find(s => s.id === id) || logSources(gameRoot())[0];
     if (await exists(pick.file)) return shell.openPath(pick.file);

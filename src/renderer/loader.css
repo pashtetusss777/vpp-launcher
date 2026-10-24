@@ -241,6 +241,7 @@ svg.ic, .ic svg { width: 15px; height: 15px; fill: currentColor; flex: none; }
 .pane {
   border-radius: var(--r-pane);
   display: flex; flex-direction: column;
+  min-height: 0; overflow: hidden;
   box-shadow: 0 12px 40px rgb(0 0 0 / .3);
   opacity: 0; transform: translateX(-10px) scale(.992);
   transition: opacity .38s var(--ease), transform .45s var(--ease), visibility 0s .45s;
@@ -264,7 +265,8 @@ svg.ic, .ic svg { width: 15px; height: 15px; fill: currentColor; flex: none; }
 }
 .pane-head .ic { color: rgb(var(--accent)); }
 .scroll {
-  flex: 1; overflow-y: auto; overflow-x: hidden;
+  flex: 1; min-height: 0;
+  overflow-y: auto; overflow-x: hidden;
   padding: 6px 20px 64px;
 }
 .scroll::-webkit-scrollbar { width: 10px; }
@@ -452,18 +454,24 @@ svg.ic, .ic svg { width: 15px; height: 15px; fill: currentColor; flex: none; }
 .source-bar { padding: 14px 20px 0; flex: none; }
 .page.browsing .only-local, .page:not(.browsing) .only-remote { display: none; }
 .cat-bar {
-  display: flex; gap: 6px; flex: none;
-  padding: 10px 20px 0; overflow-x: auto;
+  display: flex; gap: 6px; align-items: center;
+  flex: 0 0 auto; align-self: stretch; min-width: 0;
+  box-sizing: border-box; min-height: 40px;
+  padding: 8px 20px;
+  overflow-x: auto; overflow-y: hidden;
 }
-.cat-bar::-webkit-scrollbar { height: 0; }
+.cat-bar::-webkit-scrollbar { height: 4px; }
+.cat-bar::-webkit-scrollbar-thumb { background: rgb(255 255 255 / .16); border-radius: 2px; }
 .cat-bar button {
-  flex: none; border: 0; cursor: pointer;
+  flex: 0 0 auto; border: 0; cursor: pointer;
+  height: 26px; white-space: nowrap;
   background: rgb(255 255 255 / .05); color: var(--dim);
-  border-radius: 999px; padding: 5px 10px;
+  border-radius: 999px; padding: 0 10px;
   font: inherit; font-size: 12px;
 }
 .cat-bar button.on { background: rgb(var(--accent) / .22); color: var(--bright); }
 :root.light .cat-bar button:not(.on) { background: rgb(0 0 0 / .05); }
+:root.light .cat-bar::-webkit-scrollbar-thumb { background: rgb(0 0 0 / .2); }
 .page.browsing .toolbar .search { max-width: none; flex: 1; }
 .toolbar { display: flex; gap: 8px; padding: 12px 20px 0; flex: none; }
 .toolbar .search { max-width: 360px; }

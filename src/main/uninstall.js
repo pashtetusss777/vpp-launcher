@@ -3,6 +3,7 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const fs = require('fs');
 const fsp = require('fs/promises');
+const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const { pathToFileURL } = require('url');
@@ -64,14 +65,18 @@ function scheduleWipe(extraDirs) {
       `:next${tag}`,
     );
   }
-  lines.push('(goto) 2>nul & del "%~f0"');
   const script = path.join(app.getPath('temp'), 'vanilla-plus-uninstall.cmd');
+  const vbs = script.replace(/\.cmd$/i, '.vbs');
+  lines.push(`del /q ${quote(vbs)}`, '(goto) 2>nul & del "%~f0"');
   fs.writeFileSync(script, lines.join('\r\n'), 'utf8');
-  spawn('cmd.exe', ['/d', '/c', script], {
+  const run = `cmd.exe /d /c ""${script.replace(/"/g, '""')}""`;
+  fs.writeFileSync(vbs, `CreateObject("Wscript.Shell").Run "${run}", 0, False\r\n`, 'utf8');
+  const host = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'wscript.exe');
+  spawn(host, ['//B', '//Nologo', vbs], {
     detached: true,
     stdio: 'ignore',
     windowsHide: true,
-    cwd: app.getPath('temp'),
+    cwd: os.tmpdir(),
   }).unref();
 }
 

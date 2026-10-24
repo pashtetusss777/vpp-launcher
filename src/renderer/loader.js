@@ -429,6 +429,7 @@
   function show(page, focus) {
     if (page === 'profile') page = 'accounts';
     if (page === state.page && !focus) return;
+    if (state.page === 'logs' && page !== 'logs') api.logs.stop();
     closePreview();
     state.page = page;
     $$('.nav-list .nav').forEach(b => b.classList.toggle('on', b.dataset.page === page));
@@ -916,9 +917,11 @@
 
   async function loadLogs({ quiet } = {}) {
     try {
-      const data = await api.logs.read(logState.id);
+      const data = await api.logs.follow(logState.id);
+      const same = quiet && data.id === logState.id && (data.text || '') === logState.text;
       logState.id = data.id;
       logState.text = data.text || '';
+      if (same) return;
       setSeg($('#logSource'), logState.id);
       const src = (data.sources || []).find(s => s.id === logState.id);
       const bits = [LOG_META[logState.id] || 'Лог'];
@@ -933,11 +936,21 @@
     }
   }
 
-  function armLogPoll() {
-    clearInterval(logState.timer);
-    logState.timer = setInterval(() => {
-      if (state.page === 'logs') loadLogs({ quiet: true });
-    }, 2500);
+  function appendLogChunk(text) {
+    if (logState.filter.trim()) {
+      renderLogView();
+      return;
+    }
+    const lines = text.split('\n');
+    if (text.endsWith('\n')) lines.pop();
+    const view = $('#logView');
+    if (view.querySelectorAll('.log-line').length + lines.length > 2500) {
+      renderLogView();
+      return;
+    }
+    if (view.querySelector('.log-empty')) view.innerHTML = '';
+    view.insertAdjacentHTML('beforeend', lines.map(colorizeLogLine).join(''));
+    if (logState.stickBottom) view.scrollTop = view.scrollHeight;
   }
 
   $('#logSource').addEventListener('click', e => {
@@ -993,8 +1006,17 @@
     const view = $('#logView');
     logState.stickBottom = view.scrollHeight - view.scrollTop - view.clientHeight < 48;
   });
+  api.logs.onChunk(payload => {
+    if (state.page !== 'logs' || payload.id !== logState.id || !payload.text) return;
+    if (payload.reset) {
+      logState.text = payload.text;
+      renderLogView();
+      return;
+    }
+    logState.text += payload.text;
+    appendLogChunk(payload.text);
+  });
   addEventListener('focus', () => { if (state.page === 'logs') loadLogs({ quiet: true }); });
-  armLogPoll();
 
   // ------------------------------------------------------------------ Modrinth, CurseForge, resource packs, shaders
 
@@ -1132,6 +1154,12 @@
     } else runSearch(page, false);
   }
 
+  $('#modCats').addEventListener('wheel', e => {
+    const bar = e.currentTarget;
+    if (bar.scrollWidth <= bar.clientWidth) return;
+    bar.scrollLeft += e.deltaY || e.deltaX;
+    e.preventDefault();
+  }, { passive: false });
   $('#modCats').addEventListener('click', e => {
     const btn = e.target.closest('[data-cat]');
     if (!btn || shelves.mods.source === 'installed') return;
