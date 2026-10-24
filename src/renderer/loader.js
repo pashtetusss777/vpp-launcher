@@ -2727,30 +2727,6 @@
     renderServers();
     pingServers();
     showBuild();
-    api.pack.onStatus(pack => {
-      boot.pack = pack;
-      if (pack.minecraft) boot.config.minecraft = pack.minecraft;
-      if (pack.fabricLoader) boot.config.fabricLoader = pack.fabricLoader;
-      showBuild();
-    });
-    if (boot.pack?.enabled) {
-      api.pack.status().then(pack => {
-        boot.pack = pack;
-        showPack(pack);
-      }).catch(() => {});
-    }
-
-    await loadMods();
-    modsSignature = signature();
-    renderMods();
-    await loadShelf('packs');
-    await loadShelf('shaders');
-
-    if (boot.state.phase === 'running') running(boot.state);
-    else if (boot.state.phase === 'busy') busy();
-    else idleLine();
-    showLauncherUpdate(boot.update);
-
     const updateBanner = $('#updateBanner');
     if (updateBanner) {
       updateBanner.addEventListener('click', async () => {
@@ -2776,13 +2752,38 @@
         $('#updateGo').textContent = 'Установка…';
       }
     });
+    api.update.check().then(info => {
+      boot.update = info;
+      showLauncherUpdate(info);
+    }).catch(() => {});
+    api.pack.onStatus(pack => {
+      boot.pack = pack;
+      if (pack.minecraft) boot.config.minecraft = pack.minecraft;
+      if (pack.fabricLoader) boot.config.fabricLoader = pack.fabricLoader;
+      showBuild();
+    });
+    if (boot.pack?.enabled) {
+      api.pack.status().then(pack => {
+        boot.pack = pack;
+        showPack(pack);
+      }).catch(() => {});
+    }
 
-    // #mods, #accounts, #settings open straight on that page
+    if (boot.state.phase === 'running') running(boot.state);
+    else if (boot.state.phase === 'busy') busy();
+    else idleLine();
+
     const first = location.hash.slice(1);
     if (first === 'profile') show('accounts');
     else if (['mods', 'packs', 'shaders', 'accounts', 'settings', 'logs'].includes(first)) show(first);
     document.fonts?.ready.then(() => { placeWash(); $$('.segmented').forEach(placeSeg); });
     placeWash();
+
+    await loadMods();
+    modsSignature = signature();
+    renderMods();
+    await loadShelf('packs');
+    await loadShelf('shaders');
   }
 
   // a segmented control laid out while its page is hidden measures as nothing; measure it when it shows

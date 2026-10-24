@@ -185,12 +185,14 @@ async function init() {
   const root = gameRoot();
   const packState = await mrpack.loadState(root);
   const packConfig = mrpack.effectiveConfig(config, packState);
-  let pack = { enabled: false };
-  try {
-    pack = await mrpack.status(root, config);
-  } catch {
-    pack = { enabled: !!mrpack.projectId(config), error: 'Не удалось проверить сборку' };
-  }
+  const project = mrpack.projectId(config);
+  // Remote pack and launcher updates are fetched after the window is up.
+  const pack = project ? {
+    enabled: true,
+    project,
+    local: packState ? { versionId: packState.versionId, versionNumber: packState.versionNumber } : null,
+    upToDate: false,
+  } : { enabled: false };
   return {
     version: VERSION,
     config: packConfig,
@@ -201,10 +203,7 @@ async function init() {
     background: s.customBackground && await exists(s.customBackground.file)
       ? { url: pathToFileURL(s.customBackground.file).href, name: s.customBackground.name } : null,
     state: { phase: session.phase, startedAt: session.startedAt, server: session.server },
-    update: await Promise.race([
-      updater.check(config).catch(() => null),
-      new Promise(resolve => setTimeout(() => resolve(null), 4000)),
-    ]),
+    update: null,
   };
 }
 

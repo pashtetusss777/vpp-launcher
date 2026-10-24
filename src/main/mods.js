@@ -63,12 +63,9 @@ async function list(root, mc) {
   const dir = modsDir(root);
   await fsp.mkdir(dir, { recursive: true });
   const names = (await fsp.readdir(dir)).filter(n => /\.jar(\.disabled)?$/i.test(n));
-  const mods = [];
-  for (const n of names) {
-    try {
-      mods.push(await inspect(path.join(dir, n), mc));
-    } catch { /* gone while we looked */ }
-  }
+  const mods = (await Promise.all(names.map(async n => {
+    try { return await inspect(path.join(dir, n), mc); } catch { return null; }
+  }))).filter(Boolean);
   return mods.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
 }
 
