@@ -54,7 +54,12 @@ async function readEntry(zip, name, maxBytes = 4 * 1048576) {
     const data = Buffer.alloc(entry.compressed);
     await handle.read(data, 0, entry.compressed, start);
     if (entry.method === 0) return data;
-    if (entry.method === 8) return zlib.inflateRawSync(data);
+    if (entry.method === 8) {
+      // The archive's own size is the cap, so a short header cannot expand into a huge file.
+      const out = zlib.inflateRawSync(data, { maxOutputLength: Math.max(entry.uncompressed, 1) });
+      if (out.length > entry.uncompressed) return null;
+      return out;
+    }
     return null;
   } finally {
     await handle.close();

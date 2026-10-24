@@ -1,0 +1,106 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('fs');
+const fsp = require('fs/promises');
+const os = require('os');
+const path = require('path');
+const zlib = require('zlib');
+const { applyOverrides, installDropped } = require('./mrpack');
+const { openZip, readEntry } = require('./zip');
+
+function zip(entries) {
+  const locals = [];
+  const centrals = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const name = Buffer.from(entry.name);
+    const raw = Buffer.from(entry.data);
+    const stored = entry.method === 0 || entry.method === 9;
+    const comp = stored ? raw : zlib.deflateRawSync(raw);
+    const method = entry.method == null ? 8 : entry.method;
+    const claimed = entry.uncompressed == null ? raw.length : entry.uncompressed;
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(method, 8);
+    local.writeUInt32LE(comp.length, 18);
+    local.writeUInt32LE(claimed, 22);
+    local.writeUInt16LE(name.length, 26);
+    const chunk = Buffer.concat([local, name, comp]);
+    locals.push(chunk);
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(method, 10);
+    central.writeUInt32LE(comp.length, 20);
+    central.writeUInt32LE(claimed, 24);
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt32LE(offset, 42);
+    centrals.push(Buffer.concat([central, name]));
+    offset += chunk.length;
+  }
+  const dir = Buffer.concat(centrals);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(entries.length, 8);
+  eocd.writeUInt16LE(entries.length, 10);
+  eocd.writeUInt32LE(dir.length, 12);
+  eocd.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, dir, eocd]);
+}
+
+async function tempRoot() {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'vpp-mrpack-'));
+  await fsp.writeFile(path.join(root, 'keep.txt'), 'mine');
+  return root;
+}
+
+test('overrides land in the game folder and client-overrides win', async () => {
+  const root = await tempRoot();
+  const pack = path.join(root, 'pack.mrpack');
+  fs.writeFileSync(pack, zip([
+    { name: 'overrides/options.txt', data: 'from-overrides' },
+    { name: 'client-overrides/options.txt', data: 'from-client' },
+  ]));
+  const applied = await applyOverrides(pack, root);
+  assert.deepEqual(applied, ['options.txt', 'options.txt']);
+  assert.equal(fs.readFileSync(path.join(root, 'options.txt'), 'utf8'), 'from-client');
+  assert.equal(fs.readFileSync(path.join(root, 'keep.txt'), 'utf8'), 'mine');
+  assert.equal(fs.existsSync(path.join(root, 'launcher', 'mrpack-staging')), false);
+  await fsp.rm(root, { recursive: true, force: true });
+});
+
+test('a later bad entry does not touch the game folder', async () => {
+  const root = await tempRoot();
+  const pack = path.join(root, 'pack.mrpack');
+  fs.writeFileSync(pack, zip([
+    { name: 'overrides/options.txt', data: 'from-overrides' },
+    { name: 'overrides/bad.bin', data: 'nope', method: 9 },
+  ]));
+  await assert.rejects(() => applyOverrides(pack, root), /Не удалось прочитать файл сборки: bad\.bin/);
+  assert.equal(fs.existsSync(path.join(root, 'options.txt')), false);
+  assert.equal(fs.readFileSync(path.join(root, 'keep.txt'), 'utf8'), 'mine');
+  await fsp.rm(root, { recursive: true, force: true });
+});
+
+test('a jar that cannot be read is an error', async () => {
+  const root = await tempRoot();
+  const file = path.join(root, 'mods.zip');
+  fs.writeFileSync(file, zip([{ name: 'Big.jar', data: 'nope', method: 9 }]));
+  await assert.rejects(() => installDropped(root, file, '1.21'), /Не удалось прочитать файл сборки: Big\.jar/);
+  assert.equal(fs.existsSync(path.join(root, 'mods')), false);
+  await fsp.rm(root, { recursive: true, force: true });
+});
+
+test('inflate stops at the size written in the archive', async () => {
+  const root = await tempRoot();
+  const pack = path.join(root, 'bomb.zip');
+  fs.writeFileSync(pack, zip([
+    { name: 'overrides/options.txt', data: 'hello', uncompressed: 1 },
+  ]));
+  await assert.rejects(async () => readEntry(await openZip(pack), 'overrides/options.txt', 1024));
+  await fsp.rm(root, { recursive: true, force: true });
+});

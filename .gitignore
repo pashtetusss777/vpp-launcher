@@ -9,3 +9,4 @@ client/*.jar
 .test-data*/
 .test-game-run.log
 *.log
+.cursor/

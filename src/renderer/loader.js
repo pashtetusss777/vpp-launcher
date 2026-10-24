@@ -115,7 +115,7 @@
       } else {
         el.style.backgroundSize = '';
         el.style.backgroundPosition = '';
-        el.style.backgroundImage = `${url}, ${url}`;
+    el.style.backgroundImage = `${url}, ${url}`;
       }
     };
     img.onerror = () => { if (el.dataset.skin === src) applyStock(); };
@@ -836,7 +836,7 @@
       const packs = rest.filter(f => /\.mrpack$/i.test(f.name) || (state.page === 'mods' && /\.zip$/i.test(f.name)));
       const zips = rest.filter(f => /\.zip$/i.test(f.name) && !packs.includes(f));
       if (jars.length && !packs.length) {
-        show('mods');
+      show('mods');
         setTimeout(() => addFiles(jars.map(f => api.pathOf(f)).filter(Boolean)), 250);
       }
       if (packs.length) {

@@ -140,28 +140,41 @@ async function readIndexFromMrpack(mrpackPath) {
 
 // GNU tar (the `tar` on Arch and most Linux) cannot read a zip, and an .mrpack is a zip.
 // Read the two override folders ourselves. client-overrides is applied second, so it wins.
+// Files land in the game folder only after every entry has been read.
 async function applyOverrides(mrpackPath, root) {
   const zip = await openZip(mrpackPath);
+  const staging = path.join(root, 'launcher', 'mrpack-staging');
+  await fsp.rm(staging, { recursive: true, force: true });
+  await fsp.mkdir(staging, { recursive: true });
   const applied = [];
   const maxFile = 256 * 1048576;
-  for (const prefix of ['overrides/', 'client-overrides/']) {
-    for (const name of zip.entries.keys()) {
-      const norm = name.replace(/\\/g, '/');
-      if (!norm.startsWith(prefix) || norm.endsWith('/')) continue;
-      const rel = safeRel(norm.slice(prefix.length));
-      const entry = zip.entries.get(name);
-      if (!entry || entry.uncompressed > maxFile) {
-        throw new Error(`Не удалось прочитать файл сборки: ${rel}`);
+  try {
+    for (const prefix of ['overrides/', 'client-overrides/']) {
+      for (const name of zip.entries.keys()) {
+        const norm = name.replace(/\\/g, '/');
+        if (!norm.startsWith(prefix) || norm.endsWith('/')) continue;
+        const rel = safeRel(norm.slice(prefix.length));
+        const entry = zip.entries.get(name);
+        if (!entry || entry.uncompressed > maxFile) {
+          throw new Error(`Не удалось прочитать файл сборки: ${rel}`);
+        }
+        const data = await readEntry(zip, name, maxFile);
+        if (!data) throw new Error(`Не удалось прочитать файл сборки: ${rel}`);
+        const dest = path.join(staging, ...rel.split('/'));
+        await fsp.mkdir(path.dirname(dest), { recursive: true });
+        await fsp.writeFile(dest, data);
+        applied.push(rel);
       }
-      const data = await readEntry(zip, name, maxFile);
-      if (!data) throw new Error(`Не удалось прочитать файл сборки: ${rel}`);
+    }
+    for (const rel of applied) {
       const dest = path.join(root, ...rel.split('/'));
       await fsp.mkdir(path.dirname(dest), { recursive: true });
-      await fsp.writeFile(dest, data);
-      applied.push(rel);
+      await fsp.copyFile(path.join(staging, ...rel.split('/')), dest);
     }
+    return applied;
+  } finally {
+    await fsp.rm(staging, { recursive: true, force: true }).catch(() => {});
   }
-  return applied;
 }
 
 function depsFromIndex(index) {
@@ -296,9 +309,9 @@ async function installJarZip(root, archive, mc) {
       const parts = norm.split('/');
       if (parts.some(part => !part || part === '.' || part === '..' || part === '__MACOSX' || part.startsWith('.'))) continue;
       const entry = zip.entries.get(name);
-      if (!entry || entry.uncompressed > maxFile) continue;
+      if (!entry || entry.uncompressed > maxFile) throw new Error(`Не удалось прочитать файл сборки: ${norm}`);
       const data = await readEntry(zip, name, maxFile);
-      if (!data) continue;
+      if (!data) throw new Error(`Не удалось прочитать файл сборки: ${norm}`);
       const dest = path.join(staging, ...parts);
       await fsp.mkdir(path.dirname(dest), { recursive: true });
       await fsp.writeFile(dest, data);
@@ -481,4 +494,5 @@ module.exports = {
   loadState,
   effectiveConfig,
   installDropped,
+  applyOverrides,
 };
