@@ -95,6 +95,17 @@ test('a jar that cannot be read is an error', async () => {
   await fsp.rm(root, { recursive: true, force: true });
 });
 
+test('a pack file at the instance root is installed', async () => {
+  const root = await tempRoot();
+  const pack = path.join(root, 'pack.mrpack');
+  fs.writeFileSync(pack, zip([
+    { name: 'overrides/command_history.txt', data: 'give @s apple\n' },
+  ]));
+  await applyOverrides(pack, root);
+  assert.equal(fs.readFileSync(path.join(root, 'command_history.txt'), 'utf8'), 'give @s apple\n');
+  await fsp.rm(root, { recursive: true, force: true });
+});
+
 test('an override cannot leave the game folder or replace launcher state', async () => {
   const root = await tempRoot();
   const pack = path.join(root, 'pack.mrpack');

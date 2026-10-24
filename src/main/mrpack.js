@@ -33,17 +33,13 @@ async function saveState(root, state) {
   await writeJson(statePath(root), state);
 }
 
-// Top folders a pack may write. launcher/ holds this app's own state, versions/ and runtime/ are the game itself.
-const PACK_TOPS = new Set([
-  'mods', 'config', 'defaultconfigs', 'resourcepacks', 'shaderpacks',
-  'scripts', 'kubejs', 'openloader', 'datapacks', 'resources', 'structures', 'schematics',
-  'options.txt', 'optionsof.txt', 'optionsshaders.txt', 'servers.dat',
-]);
+// These belong to the launcher and the game install. A pack may write the rest, including command_history.txt.
+const PACK_DENY = new Set(['launcher', 'versions', 'libraries', 'runtime', 'assets']);
 
 function safeRel(rel) {
   const n = String(rel || '').replace(/\\/g, '/').replace(/^\/+/, '').replace(/^\.\//, '');
   const top = n.split('/')[0].toLowerCase();
-  if (!n || n.includes('..') || n.includes('\0') || n.includes(':') || !PACK_TOPS.has(top)) {
+  if (!n || n.includes('..') || n.includes('\0') || n.includes(':') || PACK_DENY.has(top)) {
     throw new Error(`Небезопасный путь в сборке: ${rel}`);
   }
   return n;
