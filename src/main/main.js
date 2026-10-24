@@ -307,17 +307,34 @@ function humanError(e) {
   return text;
 }
 
+async function shutdownWatchdog(file) {
+  if (!file) return false;
+  const handle = await fsp.open(file, 'r').catch(() => null);
+  if (!handle) return false;
+  try {
+    const buf = Buffer.alloc(2048);
+    const { bytesRead } = await handle.read(buf, 0, buf.length, 0);
+    return buf.toString('utf8', 0, bytesRead).includes('Client shutdown from post-main');
+  } finally {
+    await handle.close();
+  }
+}
+
 async function onExit(code) {
   const ranFor = Date.now() - session.startedAt;
   session.child = null;
   const extra = { exitCode: code, ranFor };
   // a game closed with the loader's own button is no crash, whatever code it leaves with
   if (code !== 0 && code !== null && !session.stopping) {
-    extra.crash = await newestCrash(session.startedAt);
-    extra.tail = await outputTail(session.outputFile);
-    extra.error = /OutOfMemoryError|Could not reserve enough space/i.test(extra.tail)
-      ? 'Java не хватило памяти - поменяйте её в настройках'
-      : `Игра закрылась с ошибкой (код ${code})`;
+    const crash = await newestCrash(session.startedAt);
+    // Minecraft writes this when a normal exit is slow. It is not a crash.
+    if (!(await shutdownWatchdog(crash))) {
+      extra.crash = crash;
+      extra.tail = await outputTail(session.outputFile);
+      extra.error = /OutOfMemoryError|Could not reserve enough space/i.test(extra.tail)
+        ? 'Java не хватило памяти - поменяйте её в настройках'
+        : `Игра закрылась с ошибкой (код ${code})`;
+    }
   }
   session.stopping = false;
   session.startedAt = 0;
