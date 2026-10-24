@@ -4,7 +4,6 @@ const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
 const crypto = require('crypto');
-const { spawn } = require('child_process');
 const { Readable, Transform } = require('stream');
 const { pipeline } = require('stream/promises');
 const {
@@ -139,51 +138,30 @@ async function readIndexFromMrpack(mrpackPath) {
   return index;
 }
 
-function extractZipDirs(mrpackPath, dest, names) {
-  return new Promise((resolve, reject) => {
-    const args = ['-xf', mrpackPath, '-C', dest, ...names];
-    const child = spawn('tar', args, { windowsHide: true });
-    child.on('error', reject);
-    child.on('exit', code => {
-      // tar exits 1 if some members are missing — acceptable for optional overrides
-      if (code === 0 || code === 1) resolve();
-      else reject(new Error(`Не удалось распаковать overrides (код ${code})`));
-    });
-  });
-}
-
+// GNU tar (the `tar` on Arch and most Linux) cannot read a zip, and an .mrpack is a zip.
+// Read the two override folders ourselves. client-overrides is applied second, so it wins.
 async function applyOverrides(mrpackPath, root) {
-  const staging = path.join(root, 'launcher', 'mrpack-staging');
-  await fsp.rm(staging, { recursive: true, force: true });
-  await fsp.mkdir(staging, { recursive: true });
-  try {
-    await extractZipDirs(mrpackPath, staging, ['overrides', 'client-overrides']);
-    const applied = [];
-    async function walkInto(srcRoot) {
-      async function walk(dir, relBase) {
-        let entries;
-        try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
-        for (const ent of entries) {
-          const src = path.join(dir, ent.name);
-          const rel = relBase ? `${relBase}/${ent.name}` : ent.name;
-          if (ent.isDirectory()) await walk(src, rel);
-          else {
-            const safe = safeRel(rel);
-            const dest = path.join(root, ...safe.split('/'));
-            await fsp.mkdir(path.dirname(dest), { recursive: true });
-            await fsp.copyFile(src, dest);
-            applied.push(safe);
-          }
-        }
+  const zip = await openZip(mrpackPath);
+  const applied = [];
+  const maxFile = 256 * 1048576;
+  for (const prefix of ['overrides/', 'client-overrides/']) {
+    for (const name of zip.entries.keys()) {
+      const norm = name.replace(/\\/g, '/');
+      if (!norm.startsWith(prefix) || norm.endsWith('/')) continue;
+      const rel = safeRel(norm.slice(prefix.length));
+      const entry = zip.entries.get(name);
+      if (!entry || entry.uncompressed > maxFile) {
+        throw new Error(`Не удалось прочитать файл сборки: ${rel}`);
       }
-      await walk(srcRoot, '');
+      const data = await readEntry(zip, name, maxFile);
+      if (!data) throw new Error(`Не удалось прочитать файл сборки: ${rel}`);
+      const dest = path.join(root, ...rel.split('/'));
+      await fsp.mkdir(path.dirname(dest), { recursive: true });
+      await fsp.writeFile(dest, data);
+      applied.push(rel);
     }
-    await walkInto(path.join(staging, 'overrides'));
-    await walkInto(path.join(staging, 'client-overrides'));
-    return applied;
-  } finally {
-    await fsp.rm(staging, { recursive: true, force: true }).catch(() => {});
   }
+  return applied;
 }
 
 function depsFromIndex(index) {
@@ -304,34 +282,28 @@ async function installIndex(root, mrpackPath, { signal, report, previous, label 
   return { index, wanted, missing, overrides, deps: depsFromIndex(index) };
 }
 
-function extractAll(archive, dest) {
-  return new Promise((resolve, reject) => {
-    const child = spawn('tar', ['-xf', archive, '-C', dest], { windowsHide: true });
-    child.on('error', reject);
-    child.on('exit', code => (code === 0 ? resolve() : reject(new Error(`Не удалось распаковать архив (${code})`))));
-  });
-}
-
 async function installJarZip(root, archive, mc) {
+  const zip = await openZip(archive);
   const staging = path.join(root, 'launcher', 'import-staging');
   await fsp.rm(staging, { recursive: true, force: true });
   await fsp.mkdir(staging, { recursive: true });
   try {
-    await extractAll(archive, staging);
     const jars = [];
-    async function walk(dir) {
-      let entries = [];
-      try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
-      for (const ent of entries) {
-        if (ent.name === '__MACOSX' || ent.name.startsWith('.')) continue;
-        const full = path.join(dir, ent.name);
-        const rel = path.relative(staging, full);
-        if (rel.startsWith('..') || path.isAbsolute(rel)) continue;
-        if (ent.isDirectory()) await walk(full);
-        else if (ent.isFile() && /\.jar$/i.test(ent.name)) jars.push(full);
-      }
+    const maxFile = 256 * 1048576;
+    for (const name of zip.entries.keys()) {
+      const norm = name.replace(/\\/g, '/');
+      if (norm.endsWith('/') || !/\.jar$/i.test(norm)) continue;
+      const parts = norm.split('/');
+      if (parts.some(part => !part || part === '.' || part === '..' || part === '__MACOSX' || part.startsWith('.'))) continue;
+      const entry = zip.entries.get(name);
+      if (!entry || entry.uncompressed > maxFile) continue;
+      const data = await readEntry(zip, name, maxFile);
+      if (!data) continue;
+      const dest = path.join(staging, ...parts);
+      await fsp.mkdir(path.dirname(dest), { recursive: true });
+      await fsp.writeFile(dest, data);
+      jars.push(dest);
     }
-    await walk(staging);
     if (!jars.length) throw new Error('В архиве нет модов. Нужен .mrpack или zip с файлами .jar');
     return mods.add(root, mc, jars);
   } finally {
