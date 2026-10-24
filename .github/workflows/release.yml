@@ -17,6 +17,9 @@ permissions:
 jobs:
   build:
     name: ${{ matrix.name }}
+    if: >-
+      (github.event_name == 'push' && !contains(github.ref_name, '-'))
+      || (github.event_name == 'workflow_dispatch' && !contains(inputs.tag, '-'))
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

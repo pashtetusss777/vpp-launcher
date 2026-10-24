@@ -1930,6 +1930,7 @@
     particles: on => on ? 'Частицы включены' : 'Частицы выключены',
     fullscreen: on => on ? 'Игра запустится на весь экран' : 'Игра запустится в окне',
     autoAccent: on => on ? 'Цвет подбирается под фон' : 'Ручной выбор цвета',
+    beta: on => on ? 'Будут ставиться пре-релизы лаунчера' : 'Только обычные версии лаунчера',
   };
 
   function setSwitch(key, on) {
@@ -1948,6 +1949,7 @@
     const on = !sw.classList.contains('on');
     setSwitch(key, on);
     if (key === 'bundledJava') save({ javaMode: on ? 'bundled' : 'custom' });
+    else if (key === 'beta') save({ beta: on }, true).then(() => api.update.check()).then(showLauncherUpdate).catch(() => {});
     else save({ [key]: on });
     status('settings', on ? 'check' : 'minus', SWITCH_TEXT[key](on), on ? 'good' : '');
   }));
@@ -2721,7 +2723,7 @@
       return;
     }
     el.hidden = false;
-    $('#updateText').textContent = `Доступна Vanilla++ ${info.version}`;
+    $('#updateText').textContent = info.pre ? `Бета Vanilla++ ${info.version}` : `Доступна Vanilla++ ${info.version}`;
     $('#updateGo').textContent = 'Обновить';
   }
 
@@ -2779,6 +2781,7 @@
     setSwitch('bundledJava', boot.settings.javaMode !== 'custom');
     setSwitch('particles', boot.settings.particles !== false);
     setSwitch('fullscreen', !!boot.settings.fullscreen);
+    setSwitch('beta', !!boot.settings.beta);
     setSwitch('autoAccent', !!boot.settings.autoAccent);
     applyThemeMode(boot.settings.themeMode || 'dark', true);
     $('#javaPath').value = boot.settings.javaPath || '';

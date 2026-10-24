@@ -7,7 +7,6 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { Readable, Transform } = require('stream');
 const { pipeline } = require('stream/promises');
-const { app } = require('electron');
 const { fetchWithRetry } = require('./util');
 
 const VERSION = require('../../package.json').version;
@@ -17,15 +16,31 @@ function repoOf(config) {
   return /^[\w.-]+\/[\w.-]+$/.test(repo) ? repo : '';
 }
 
+function piece(seg) {
+  const [num, pre] = String(seg || '0').split('-');
+  return { n: parseInt(num, 10) || 0, pre: pre || '' };
+}
+
 function cmp(a, b) {
-  const pa = String(a).replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
-  const pb = String(b).replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
+  const pa = String(a).replace(/^v/, '').split('.').map(piece);
+  const pb = String(b).replace(/^v/, '').split('.').map(piece);
   const len = Math.max(pa.length, pb.length);
   for (let i = 0; i < len; i++) {
-    const d = (pa[i] || 0) - (pb[i] || 0);
-    if (d) return d;
+    const da = pa[i] || { n: 0, pre: '' };
+    const db = pb[i] || { n: 0, pre: '' };
+    if (da.n !== db.n) return da.n - db.n;
+    // 1.1.11-beta.1 is older than 1.1.11, so a beta build can move on to the stable one.
+    if (da.pre !== db.pre) {
+      if (!da.pre) return 1;
+      if (!db.pre) return -1;
+      return da.pre < db.pre ? -1 : 1;
+    }
   }
   return 0;
+}
+
+function electronApp() {
+  return require('electron').app;
 }
 
 function assetFor(assets, version) {
@@ -39,14 +54,8 @@ function assetFor(assets, version) {
   return name('x64.tar.gz') || name('x64.pacman') || name('amd64.deb');
 }
 
-async function latest(config) {
-  const repo = repoOf(config);
-  if (!repo || !app.isPackaged) return null;
-  const res = await fetchWithRetry(`https://api.github.com/repos/${repo}/releases/latest`, {
-    headers: { Accept: 'application/vnd.github+json' },
-  });
-  const data = await res.json();
-  const version = String(data.tag_name || '').replace(/^v/, '');
+function releaseInfo(data) {
+  const version = String(data?.tag_name || '').replace(/^v/, '');
   if (!version || cmp(version, VERSION) <= 0) return null;
   const asset = assetFor(data.assets || [], version);
   if (!asset?.browser_download_url) return null;
@@ -56,7 +65,28 @@ async function latest(config) {
     url: asset.browser_download_url,
     size: asset.size || 0,
     notes: String(data.body || '').slice(0, 500),
+    pre: !!data.prerelease,
   };
+}
+
+async function latest(config, beta) {
+  const repo = repoOf(config);
+  if (!repo || !electronApp().isPackaged) return null;
+  const headers = { Accept: 'application/vnd.github+json' };
+  if (!beta) {
+    const res = await fetchWithRetry(`https://api.github.com/repos/${repo}/releases/latest`, { headers });
+    return releaseInfo(await res.json());
+  }
+  const res = await fetchWithRetry(`https://api.github.com/repos/${repo}/releases?per_page=20`, { headers });
+  const list = await res.json();
+  if (!Array.isArray(list)) return null;
+  let best = null;
+  for (const rel of list) {
+    if (!rel || rel.draft) continue;
+    const info = releaseInfo(rel);
+    if (info && (!best || cmp(info.version, best.version) > 0)) best = info;
+  }
+  return best;
 }
 
 async function download(info, dir, onProgress) {
@@ -268,9 +298,9 @@ async function scheduleReplace(file, info) {
 
 let pending = null;
 
-async function check(config) {
+async function check(config, beta) {
   try {
-    pending = await latest(config);
+    pending = await latest(config, beta);
     return pending;
   } catch (e) {
     pending = null;
@@ -278,10 +308,10 @@ async function check(config) {
   }
 }
 
-async function install(config, onProgress) {
-  const info = pending || await latest(config);
+async function install(config, beta, onProgress) {
+  const info = pending || await latest(config, beta);
   if (!info) throw new Error('Обновление не найдено');
-  const dir = path.join(app.getPath('userData'), 'updates');
+  const dir = path.join(electronApp().getPath('userData'), 'updates');
   await fsp.mkdir(dir, { recursive: true });
   await sweep(dir);
   onProgress?.({ stage: 'download', done: 0, total: info.size || 1, version: info.version });
@@ -291,4 +321,4 @@ async function install(config, onProgress) {
   return { ...result, version: info.version, file };
 }
 
-module.exports = { check, install, repoOf };
+module.exports = { check, install, repoOf, cmp };

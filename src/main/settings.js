@@ -24,6 +24,7 @@ const DEFAULTS = {
   fullscreen: false,
   gameDir: '',
   afterLaunch: 'hide',
+  beta: false,
   servers: null,
   lastLaunch: null,
 };

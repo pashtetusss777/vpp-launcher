@@ -326,10 +326,10 @@ async function onExit(code) {
   const extra = { exitCode: code, ranFor };
   // a game closed with the loader's own button is no crash, whatever code it leaves with
   if (code !== 0 && code !== null && !session.stopping) {
-    const crash = await newestCrash(session.startedAt);
-    // Minecraft writes this when a normal exit is slow. It is not a crash.
-    if (!(await shutdownWatchdog(crash))) {
-      extra.crash = crash;
+    const found = await exitCrash(session.startedAt);
+    // A slow exit writes only a watchdog report. A real crash file still counts.
+    if (!found.clean) {
+      extra.crash = found.file;
       extra.tail = await outputTail(session.outputFile);
       extra.error = /OutOfMemoryError|Could not reserve enough space/i.test(extra.tail)
         ? 'Java не хватило памяти - поменяйте её в настройках'
@@ -361,19 +361,24 @@ async function outputTail(file) {
   return [...lines, ...plain].map(l => l.trimEnd()).filter(Boolean).slice(-14).join('\n');
 }
 
-async function newestCrash(since) {
+async function exitCrash(since) {
   const dir = path.join(gameRoot(), 'crash-reports');
-  try {
-    const names = await fsp.readdir(dir);
-    let best = null;
-    for (const n of names) {
-      const stat = await fsp.stat(path.join(dir, n));
-      if (stat.mtimeMs >= since - 2000 && (!best || stat.mtimeMs > best.time)) best = { file: path.join(dir, n), time: stat.mtimeMs };
-    }
-    return best?.file || null;
-  } catch {
-    return null;
+  let names = [];
+  try { names = await fsp.readdir(dir); } catch { return { file: null, clean: false }; }
+  const recent = [];
+  for (const name of names) {
+    const file = path.join(dir, name);
+    const stat = await fsp.stat(file).catch(() => null);
+    if (stat && stat.mtimeMs >= since - 2000) recent.push({ file, time: stat.mtimeMs });
   }
+  recent.sort((a, b) => b.time - a.time);
+  let file = null;
+  let watchdogs = 0;
+  for (const item of recent) {
+    if (await shutdownWatchdog(item.file)) watchdogs += 1;
+    else if (!file) file = item.file;
+  }
+  return { file, clean: !file && recent.length > 0 && watchdogs === recent.length };
 }
 
 function stopGame() {
@@ -725,9 +730,9 @@ function registerIpc() {
   }));
   handle('catalog:install', (source, kind, projectId, versionId) => installCatalog(source, kind, projectId, versionId));
   handle('pack:status', () => mrpack.status(gameRoot(), config));
-  handle('update:check', () => updater.check(config));
+  handle('update:check', () => updater.check(config, !!settings.get().beta));
   handle('update:install', async () => {
-    const result = await updater.install(config, p => send('update:progress', p));
+    const result = await updater.install(config, !!settings.get().beta, p => send('update:progress', p));
     if (result.restart) setTimeout(() => app.quit(), 400);
     return result;
   });
