@@ -33,12 +33,33 @@ async function saveState(root, state) {
   await writeJson(statePath(root), state);
 }
 
+// Top folders a pack may write. launcher/ holds this app's own state, versions/ and runtime/ are the game itself.
+const PACK_TOPS = new Set([
+  'mods', 'config', 'defaultconfigs', 'resourcepacks', 'shaderpacks',
+  'scripts', 'kubejs', 'openloader', 'datapacks', 'resources', 'structures', 'schematics',
+  'options.txt', 'optionsof.txt', 'optionsshaders.txt', 'servers.dat',
+]);
+
 function safeRel(rel) {
-  const n = String(rel || '').replace(/\\/g, '/').replace(/^\/+/, '');
-  if (!n || n.includes('..') || /^[a-zA-Z]:/.test(n) || n.startsWith('/')) {
+  const n = String(rel || '').replace(/\\/g, '/').replace(/^\/+/, '').replace(/^\.\//, '');
+  const top = n.split('/')[0].toLowerCase();
+  if (!n || n.includes('..') || n.includes('\0') || n.includes(':') || !PACK_TOPS.has(top)) {
     throw new Error(`Небезопасный путь в сборке: ${rel}`);
   }
   return n;
+}
+
+function packDownload(url) {
+  if (!/^https:\/\//i.test(url)) return '';
+  let host = '';
+  try { host = new URL(url).hostname.toLowerCase(); } catch { return ''; }
+  const ok = host === 'cdn.modrinth.com'
+    || host === 'github.com'
+    || host === 'objects.githubusercontent.com'
+    || host === 'raw.githubusercontent.com'
+    || host === 'gitlab.com'
+    || host.endsWith('.gitlab.com');
+  return ok ? url : '';
 }
 
 function clientWanted(file) {
@@ -148,6 +169,9 @@ async function applyOverrides(mrpackPath, root) {
   await fsp.mkdir(staging, { recursive: true });
   const applied = [];
   const maxFile = 256 * 1048576;
+  const maxTotal = 1024 * 1048576;
+  let files = 0;
+  let total = 0;
   try {
     for (const prefix of ['overrides/', 'client-overrides/']) {
       for (const name of zip.entries.keys()) {
@@ -155,7 +179,9 @@ async function applyOverrides(mrpackPath, root) {
         if (!norm.startsWith(prefix) || norm.endsWith('/')) continue;
         const rel = safeRel(norm.slice(prefix.length));
         const entry = zip.entries.get(name);
-        if (!entry || entry.uncompressed > maxFile) {
+        files += 1;
+        total += entry?.uncompressed || 0;
+        if (!entry || entry.uncompressed > maxFile || files > 4000 || total > maxTotal) {
           throw new Error(`Не удалось прочитать файл сборки: ${rel}`);
         }
         const data = await readEntry(zip, name, maxFile);
@@ -225,16 +251,23 @@ async function installIndex(root, mrpackPath, { signal, report, previous, label 
   const index = await readIndexFromMrpack(mrpackPath);
   const wanted = index.files.filter(clientWanted).map(f => {
     const rel = safeRel(f.path);
+    const downloads = (f.downloads || []).map(packDownload).filter(Boolean);
+    if ((f.downloads || []).some(u => /^https:\/\//i.test(u)) && !downloads.length) {
+      throw new Error(`Ссылка на файл сборки не подходит: ${rel}`);
+    }
     return {
       path: rel,
       sha1: f.hashes?.sha1 || '',
       sha512: f.hashes?.sha512 || '',
       size: f.fileSize || f.file_size || 0,
-      downloads: (f.downloads || []).filter(u => /^https:\/\//i.test(u)),
+      downloads,
     };
   }).filter(f => f.sha1 && f.downloads.length);
 
-  const prevPaths = new Set((previous?.files || []).map(f => f.path));
+  const prevPaths = [];
+  for (const file of previous?.files || []) {
+    try { prevPaths.push(safeRel(file.path)); } catch { /* a saved path must not escape the game folder */ }
+  }
   const nextPaths = new Set(wanted.map(f => f.path));
   if (previous) {
     for (const rel of prevPaths) {
@@ -282,7 +315,10 @@ async function installIndex(root, mrpackPath, { signal, report, previous, label 
   }
 
   stage('Применяем конфиги сборки…');
-  const prevOverrides = new Set(previous?.overrides || []);
+  const prevOverrides = [];
+  for (const rel of previous?.overrides || []) {
+    try { prevOverrides.push(safeRel(rel)); } catch { /* ignore a path that could leave the game folder */ }
+  }
   const overrides = await applyOverrides(mrpackPath, root);
   if (previous) {
     for (const rel of prevOverrides) {
@@ -303,13 +339,20 @@ async function installJarZip(root, archive, mc) {
   try {
     const jars = [];
     const maxFile = 256 * 1048576;
+    const maxTotal = 1024 * 1048576;
+    let files = 0;
+    let total = 0;
     for (const name of zip.entries.keys()) {
       const norm = name.replace(/\\/g, '/');
       if (norm.endsWith('/') || !/\.jar$/i.test(norm)) continue;
       const parts = norm.split('/');
       if (parts.some(part => !part || part === '.' || part === '..' || part === '__MACOSX' || part.startsWith('.'))) continue;
       const entry = zip.entries.get(name);
-      if (!entry || entry.uncompressed > maxFile) throw new Error(`Не удалось прочитать файл сборки: ${norm}`);
+      files += 1;
+      total += entry?.uncompressed || 0;
+      if (!entry || entry.uncompressed > maxFile || files > 4000 || total > maxTotal) {
+        throw new Error(`Не удалось прочитать файл сборки: ${norm}`);
+      }
       const data = await readEntry(zip, name, maxFile);
       if (!data) throw new Error(`Не удалось прочитать файл сборки: ${norm}`);
       const dest = path.join(staging, ...parts);
@@ -332,7 +375,10 @@ function curseCdn(file) {
 
 async function installCurse(root, archive, manifest, report) {
   const stage = (text, extra = {}) => report?.(text, extra);
-  const files = (manifest.files || []).filter(f => f && f.projectID && f.fileID && f.required !== false);
+    const files = (manifest.files || []).filter(f => {
+      if (!f || f.required === false) return false;
+      return Number.isInteger(f.projectID) && f.projectID > 0 && Number.isInteger(f.fileID) && f.fileID > 0;
+    });
   if (!files.length) throw new Error('В сборке CurseForge нет модов');
   let downloaded = 0;
   for (let i = 0; i < files.length; i++) {
@@ -347,7 +393,12 @@ async function installCurse(root, archive, manifest, report) {
     const file = info?.data;
     const filename = path.basename(String(file?.fileName || ''));
     if (!file || !/\.jar$/i.test(filename)) continue;
-    const url = /^https:\/\//i.test(file.downloadUrl || '') ? file.downloadUrl : curseCdn(file);
+    let url = '';
+    try {
+      const host = new URL(String(file.downloadUrl || '')).hostname.toLowerCase();
+      if (/^https:\/\//i.test(file.downloadUrl) && (host === 'edge.forgecdn.net' || host.endsWith('.forgecdn.net'))) url = file.downloadUrl;
+    } catch { /* the CDN built from the file id is the fallback */ }
+    if (!url) url = curseCdn(file);
     if (!url) continue;
     const dest = path.join(mods.modsDir(root), filename);
     const sha1 = (file.hashes || []).find(h => h.algo === 1)?.value || '';

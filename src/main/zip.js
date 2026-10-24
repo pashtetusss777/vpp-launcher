@@ -19,6 +19,8 @@ async function openZip(file) {
     const count = end.readUInt16LE(eocd + 10);
     const dirSize = end.readUInt32LE(eocd + 12);
     const dirOffset = end.readUInt32LE(eocd + 16);
+    // Sizes come from the archive header. Refuse a directory that is not inside the file.
+    if (dirSize > 8 * 1048576 || dirOffset > size || dirOffset + dirSize > size) throw new Error('не zip-архив');
     const dir = Buffer.alloc(dirSize);
     await handle.read(dir, 0, dirSize, dirOffset);
     const entries = new Map();
@@ -36,7 +38,7 @@ async function openZip(file) {
       entries.set(name, { method, compressed, uncompressed, local });
       p += 46 + nameLen + extraLen + commentLen;
     }
-    return { file, entries };
+    return { file, entries, size };
   } finally {
     await handle.close();
   }
@@ -44,13 +46,16 @@ async function openZip(file) {
 
 async function readEntry(zip, name, maxBytes = 4 * 1048576) {
   const entry = zip.entries.get(name);
-  if (!entry || entry.uncompressed > maxBytes) return null;
+  if (!entry || entry.uncompressed > maxBytes || entry.compressed > maxBytes) return null;
   const handle = await fsp.open(zip.file, 'r');
   try {
+    const size = zip.size ?? (await handle.stat()).size;
+    if (entry.local < 0 || entry.local + 30 > size) return null;
     const header = Buffer.alloc(30);
     await handle.read(header, 0, 30, entry.local);
     if (header.readUInt32LE(0) !== 0x04034b50) return null;
     const start = entry.local + 30 + header.readUInt16LE(26) + header.readUInt16LE(28);
+    if (start < 0 || start > size || start + entry.compressed > size) return null;
     const data = Buffer.alloc(entry.compressed);
     await handle.read(data, 0, entry.compressed, start);
     if (entry.method === 0) return data;

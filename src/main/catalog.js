@@ -20,6 +20,28 @@ const KINDS = {
   shader: { modrinth: 'shader', curse: 6552, loader: false },
 };
 
+// One chip in the UI, two ids. CurseForge has no separate category for some Modrinth ones.
+const MOD_CATEGORIES = {
+  optimization: { modrinth: 'optimization', curse: 6814 },
+  library: { modrinth: 'library', curse: 421 },
+  technology: { modrinth: 'technology', curse: 412 },
+  magic: { modrinth: 'magic', curse: 419 },
+  adventure: { modrinth: 'adventure', curse: 422 },
+  worldgen: { modrinth: 'worldgen', curse: 406 },
+  storage: { modrinth: 'storage', curse: 420 },
+  food: { modrinth: 'food', curse: 436 },
+  utility: { modrinth: 'utility', curse: 5191 },
+  decoration: { modrinth: 'decoration', curse: 424 },
+  equipment: { modrinth: 'equipment', curse: 434 },
+};
+
+function modFilter(kind, category) {
+  if (!category || kind !== 'mod') return null;
+  const cat = MOD_CATEGORIES[category];
+  if (!cat) throw new Error('Неизвестная категория');
+  return cat;
+}
+
 function kindOf(kind) {
   const spec = KINDS[kind];
   if (!spec) throw new Error('Неизвестный раздел');
@@ -82,61 +104,75 @@ async function installed(root, kind, source, projectId) {
   return kind === 'mod' && await exists(path.join(dir, filename + '.disabled'));
 }
 
-async function searchModrinth(kind, query, mc) {
+const PAGE = 24;
+
+async function searchModrinth(kind, query, mc, offset, category) {
   const spec = kindOf(kind);
   const facets = [['project_type:' + spec.modrinth], ['versions:' + mc]];
   if (spec.loader) facets.push(['categories:fabric']);
+  if (category) facets.push(['categories:' + category.modrinth]);
   const params = new URLSearchParams({
-    limit: '24',
+    limit: String(PAGE),
+    offset: String(offset),
     index: query ? 'relevance' : 'downloads',
     facets: JSON.stringify(facets),
   });
   if (query) params.set('query', query);
   const data = await modrinth('/search?' + params);
-  return (data.hits || []).map(hit => ({
-    source: 'modrinth',
-    id: hit.project_id,
-    name: hit.title || hit.slug,
-    author: hit.author || '',
-    description: clip(hit.description),
-    icon: httpsIcon(hit.icon_url),
-    downloads: hit.downloads || 0,
-  }));
+  return {
+    total: data.total_hits || 0,
+    hits: (data.hits || []).map(hit => ({
+      source: 'modrinth',
+      id: hit.project_id,
+      name: hit.title || hit.slug,
+      author: hit.author || '',
+      description: clip(hit.description),
+      icon: httpsIcon(hit.icon_url),
+      downloads: hit.downloads || 0,
+    })),
+  };
 }
 
-async function searchCurse(kind, query, mc) {
+async function searchCurse(kind, query, mc, offset, category) {
   const spec = kindOf(kind);
   const params = new URLSearchParams({
     gameId: '432',
     classId: String(spec.curse),
-    pageSize: '24',
+    pageSize: String(PAGE),
+    index: String(offset),
     sortField: query ? '2' : '6',
     sortOrder: 'desc',
     gameVersion: mc,
   });
   if (spec.loader) params.set('modLoaderType', '4');
+  if (category) params.set('categoryId', String(category.curse));
   if (query) params.set('searchFilter', query);
   const data = await curse('/mods/search?' + params);
-  return (data.data || []).map(mod => ({
-    source: 'curseforge',
-    id: String(mod.id),
-    name: mod.name,
-    author: mod.authors?.[0]?.name || '',
-    description: clip(mod.summary),
-    icon: httpsIcon(mod.logo?.url || mod.logo?.thumbnailUrl),
-    downloads: mod.downloadCount || 0,
-  }));
+  return {
+    total: data.pagination?.totalCount || 0,
+    hits: (data.data || []).map(mod => ({
+      source: 'curseforge',
+      id: String(mod.id),
+      name: mod.name,
+      author: mod.authors?.[0]?.name || '',
+      description: clip(mod.summary),
+      icon: httpsIcon(mod.logo?.url || mod.logo?.thumbnailUrl),
+      downloads: mod.downloadCount || 0,
+    })),
+  };
 }
 
-async function search({ root, source, kind, query, mc }) {
+async function search({ root, source, kind, query, mc, offset, category }) {
   kindOf(kind);
   query = String(query || '').trim().slice(0, 80);
+  offset = Math.max(0, Math.min(5000, Number(offset) || 0));
   if (source !== 'modrinth' && source !== 'curseforge') throw new Error('Неизвестный каталог');
-  const hits = source === 'modrinth'
-    ? await searchModrinth(kind, query, mc)
-    : await searchCurse(kind, query, mc);
-  for (const hit of hits) hit.installed = await installed(root, kind, source, hit.id);
-  return hits;
+  const filter = modFilter(kind, category);
+  const page = source === 'modrinth'
+    ? await searchModrinth(kind, query, mc, offset, filter)
+    : await searchCurse(kind, query, mc, offset, filter);
+  for (const hit of page.hits) hit.installed = await installed(root, kind, source, hit.id);
+  return page;
 }
 
 function plainText(value) {
@@ -344,4 +380,4 @@ async function download(url, file, sha1) {
   }
 }
 
-module.exports = { search, project, resolve, download, remember };
+module.exports = { search, project, resolve, download, remember, modFilter };

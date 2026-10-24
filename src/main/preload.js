@@ -36,7 +36,7 @@ contextBridge.exposeInMainWorld('vanilla', {
     restore: (kind, token) => call('packs:restore', kind, token),
   },
   catalog: {
-    search: (source, kind, query) => call('catalog:search', source, kind, query),
+    search: (source, kind, query, offset, category) => call('catalog:search', source, kind, query, offset, category),
     project: (source, kind, projectId) => call('catalog:project', source, kind, projectId),
     install: (source, kind, projectId, versionId) => call('catalog:install', source, kind, projectId, versionId),
   },

@@ -606,8 +606,8 @@ function registerIpc() {
   handle('packs:toggle', (kind, file, on) => packs.setOn(gameRoot(), kind, file, on));
   handle('packs:remove', (kind, file) => packs.remove(gameRoot(), kind, file));
   handle('packs:restore', (kind, token) => packs.restore(gameRoot(), kind, token));
-  handle('catalog:search', async (source, kind, query) => catalog.search({
-    root: gameRoot(), source, kind, query, mc: (await liveConfig()).minecraft,
+  handle('catalog:search', async (source, kind, query, offset, category) => catalog.search({
+    root: gameRoot(), source, kind, query, offset, category, mc: (await liveConfig()).minecraft,
   }));
   handle('catalog:project', async (source, kind, projectId) => catalog.project({
     source, kind, projectId, mc: (await liveConfig()).minecraft,

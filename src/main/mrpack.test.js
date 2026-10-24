@@ -78,9 +78,9 @@ test('a later bad entry does not touch the game folder', async () => {
   const pack = path.join(root, 'pack.mrpack');
   fs.writeFileSync(pack, zip([
     { name: 'overrides/options.txt', data: 'from-overrides' },
-    { name: 'overrides/bad.bin', data: 'nope', method: 9 },
+    { name: 'overrides/config/bad.bin', data: 'nope', method: 9 },
   ]));
-  await assert.rejects(() => applyOverrides(pack, root), /Не удалось прочитать файл сборки: bad\.bin/);
+  await assert.rejects(() => applyOverrides(pack, root), /Не удалось прочитать файл сборки: config\/bad\.bin/);
   assert.equal(fs.existsSync(path.join(root, 'options.txt')), false);
   assert.equal(fs.readFileSync(path.join(root, 'keep.txt'), 'utf8'), 'mine');
   await fsp.rm(root, { recursive: true, force: true });
@@ -92,6 +92,31 @@ test('a jar that cannot be read is an error', async () => {
   fs.writeFileSync(file, zip([{ name: 'Big.jar', data: 'nope', method: 9 }]));
   await assert.rejects(() => installDropped(root, file, '1.21'), /Не удалось прочитать файл сборки: Big\.jar/);
   assert.equal(fs.existsSync(path.join(root, 'mods')), false);
+  await fsp.rm(root, { recursive: true, force: true });
+});
+
+test('an override cannot leave the game folder or replace launcher state', async () => {
+  const root = await tempRoot();
+  const pack = path.join(root, 'pack.mrpack');
+  fs.writeFileSync(pack, zip([
+    { name: 'overrides/../../outside.txt', data: 'no' },
+    { name: 'overrides/launcher/pack.json', data: '{}' },
+  ]));
+  await assert.rejects(() => applyOverrides(pack, root), /Небезопасный путь/);
+  assert.equal(fs.readFileSync(path.join(root, 'keep.txt'), 'utf8'), 'mine');
+  assert.equal(fs.existsSync(path.join(root, 'launcher', 'pack.json')), false);
+  await fsp.rm(root, { recursive: true, force: true });
+});
+
+test('a zip header cannot ask for a directory bigger than the file', async () => {
+  const root = await tempRoot();
+  const pack = path.join(root, 'fake.zip');
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(1, 10);
+  end.writeUInt32LE(64 * 1048576, 12);
+  fs.writeFileSync(pack, end);
+  await assert.rejects(() => openZip(pack), /не zip-архив/);
   await fsp.rm(root, { recursive: true, force: true });
 });
 

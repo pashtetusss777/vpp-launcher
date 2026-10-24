@@ -451,6 +451,19 @@ svg.ic, .ic svg { width: 15px; height: 15px; fill: currentColor; flex: none; }
 
 .source-bar { padding: 14px 20px 0; flex: none; }
 .page.browsing .only-local, .page:not(.browsing) .only-remote { display: none; }
+.cat-bar {
+  display: flex; gap: 6px; flex: none;
+  padding: 10px 20px 0; overflow-x: auto;
+}
+.cat-bar::-webkit-scrollbar { height: 0; }
+.cat-bar button {
+  flex: none; border: 0; cursor: pointer;
+  background: rgb(255 255 255 / .05); color: var(--dim);
+  border-radius: 999px; padding: 5px 10px;
+  font: inherit; font-size: 12px;
+}
+.cat-bar button.on { background: rgb(var(--accent) / .22); color: var(--bright); }
+:root.light .cat-bar button:not(.on) { background: rgb(0 0 0 / .05); }
 .page.browsing .toolbar .search { max-width: none; flex: 1; }
 .toolbar { display: flex; gap: 8px; padding: 12px 20px 0; flex: none; }
 .toolbar .search { max-width: 360px; }

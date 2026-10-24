@@ -3,6 +3,7 @@
 const fsp = require('fs/promises');
 const path = require('path');
 const { readModInfo } = require('./zip');
+const { safeName } = require('./packs');
 
 const cache = new Map();
 
@@ -107,18 +108,20 @@ async function add(root, mc, files) {
 }
 
 async function setEnabled(root, file, on) {
+  const name = safeName(file);
   const dir = modsDir(root);
-  const from = path.join(dir, on ? file + '.disabled' : file);
-  const to = path.join(dir, on ? file : file + '.disabled');
+  const from = path.join(dir, on ? name + '.disabled' : name);
+  const to = path.join(dir, on ? name : name + '.disabled');
   await fsp.rename(from, to);
 }
 
 // Removed mods wait in launcher/removed until the loader closes, so «Вернуть» can bring them back
 async function remove(root, file) {
+  const base = safeName(file);
   const dir = modsDir(root);
   const trash = trashDir(root);
   await fsp.mkdir(trash, { recursive: true });
-  for (const name of [file, file + '.disabled']) {
+  for (const name of [base, base + '.disabled']) {
     try {
       await fsp.rename(path.join(dir, name), path.join(trash, name));
       return name;
@@ -128,7 +131,8 @@ async function remove(root, file) {
 }
 
 async function restore(root, token) {
-  await fsp.rename(path.join(trashDir(root), token), path.join(modsDir(root), token));
+  const name = safeName(token);
+  await fsp.rename(path.join(trashDir(root), name), path.join(modsDir(root), name));
 }
 
 async function emptyTrash(root, moveToRecycleBin) {

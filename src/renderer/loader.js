@@ -999,9 +999,9 @@
   // ------------------------------------------------------------------ Modrinth, CurseForge, resource packs, shaders
 
   const shelves = {
-    mods: { source: 'installed', hits: [], seq: 0, timer: 0 },
-    packs: { source: 'installed', hits: [], seq: 0, timer: 0 },
-    shaders: { source: 'installed', hits: [], seq: 0, timer: 0 },
+    mods: { source: 'installed', hits: [], total: 0, category: '', seq: 0, timer: 0, loading: false },
+    packs: { source: 'installed', hits: [], total: 0, category: '', seq: 0, timer: 0, loading: false },
+    shaders: { source: 'installed', hits: [], total: 0, category: '', seq: 0, timer: 0, loading: false },
   };
   const SHELF = {
     mods: { kind: 'mod', list: '#modList', search: '#modSearch', source: '#modSource', words: ['мод', 'мода', 'модов'], placeholder: 'Поиск по модам' },
@@ -1035,52 +1035,77 @@
     $$('img', root).forEach(img => img.addEventListener('error', () => img.remove()));
   }
 
-  function renderRemote(page) {
+  function remoteRow(hit) {
+    const wrap = document.createElement('div');
+    wrap.className = 'row-wrap';
+    wrap.dataset.project = hit.id;
+    const sub = [hit.author, hit.description].filter(Boolean).join(' · ');
+    wrap.innerHTML = `
+      <div class="row remote">
+        ${catalogIcon(hit)}
+        <div class="row-text">
+          <div class="row-title"><span class="name">${esc(hit.name)}</span><span class="pill">${esc(fmtCount(hit.downloads))}</span></div>
+          <div class="row-sub">${esc(sub)}</div>
+        </div>
+        <div class="row-actions">
+          <button class="btn wash small" data-install>${hit.installed ? 'Обновить' : 'Скачать'}</button>
+        </div>
+      </div>`;
+    return wrap;
+  }
+
+  function renderRemote(page, from) {
     const spec = SHELF[page];
     const shelf = shelves[page];
     const list = $(spec.list);
-    list.innerHTML = '';
+    if (!from) list.innerHTML = '';
     if (!shelf.hits.length) {
       list.innerHTML = '<div class="list-empty">Ничего не нашлось для этой версии Minecraft</div>';
       return;
     }
-    for (const hit of shelf.hits) {
-      const wrap = document.createElement('div');
-      wrap.className = 'row-wrap';
-      wrap.dataset.project = hit.id;
-      const sub = [hit.author, hit.description].filter(Boolean).join(' · ');
-      wrap.innerHTML = `
-        <div class="row remote">
-          ${catalogIcon(hit)}
-          <div class="row-text">
-            <div class="row-title"><span class="name">${esc(hit.name)}</span><span class="pill">${esc(fmtCount(hit.downloads))}</span></div>
-            <div class="row-sub">${esc(sub)}</div>
-          </div>
-          <div class="row-actions">
-            <button class="btn wash small" data-install ${hit.installed ? '' : ''}>${hit.installed ? 'Обновить' : 'Скачать'}</button>
-          </div>
-        </div>`;
-      list.appendChild(wrap);
-    }
+    for (const hit of shelf.hits.slice(from || 0)) list.appendChild(remoteRow(hit));
     wireIcons(list);
   }
 
-  async function runSearch(page) {
+  async function runSearch(page, append) {
     const shelf = shelves[page];
     const spec = SHELF[page];
-    const seq = ++shelf.seq;
-    closePreview();
+    if (append && (shelf.loading || shelf.hits.length >= shelf.total)) return;
+    const seq = append ? shelf.seq : ++shelf.seq;
     const list = $(spec.list);
-    list.innerHTML = '<div class="list-empty">Ищем…</div>';
+    if (!append) {
+      closePreview();
+      shelf.hits = [];
+      shelf.total = 0;
+      list.innerHTML = '<div class="list-empty">Ищем…</div>';
+    }
+    shelf.loading = true;
     try {
-      const hits = await api.catalog.search(shelf.source, spec.kind, $(spec.search).value.trim());
+      const pageResult = await api.catalog.search(
+        shelf.source, spec.kind, $(spec.search).value.trim(),
+        append ? shelf.hits.length : 0,
+        page === 'mods' ? shelf.category : '',
+      );
       if (seq !== shelf.seq) return;
-      shelf.hits = hits;
-      renderRemote(page);
+      const hits = pageResult.hits || [];
+      if (append && !hits.length) {
+        shelf.total = shelf.hits.length;
+        return;
+      }
+      const from = shelf.hits.length;
+      shelf.total = pageResult.total || hits.length;
+      shelf.hits = append ? shelf.hits.concat(hits) : hits;
+      renderRemote(page, append ? from : 0);
+      if (shelf.hits.length < shelf.total && list.clientHeight > 0 && list.scrollHeight <= list.clientHeight + 4) {
+        shelf.loading = false;
+        await runSearch(page, true);
+      }
     } catch (e) {
       if (seq !== shelf.seq) return;
-      list.innerHTML = '<div class="list-empty">Поиск не удался</div>';
+      if (!append) list.innerHTML = '<div class="list-empty">Поиск не удался</div>';
       status(page, 'warn', e.message, 'warn');
+    } finally {
+      if (seq === shelf.seq) shelf.loading = false;
     }
   }
 
@@ -1104,7 +1129,24 @@
     if (source === 'installed') {
       if (page === 'mods') renderMods();
       else renderShelf(page);
-    } else runSearch(page);
+    } else runSearch(page, false);
+  }
+
+  $('#modCats').addEventListener('click', e => {
+    const btn = e.target.closest('[data-cat]');
+    if (!btn || shelves.mods.source === 'installed') return;
+    shelves.mods.category = btn.dataset.cat;
+    $$('#modCats button').forEach(b => b.classList.toggle('on', b === btn));
+    runSearch('mods', false);
+  });
+  for (const page of ['mods', 'packs', 'shaders']) {
+    $(SHELF[page].list).addEventListener('scroll', () => {
+      const list = $(SHELF[page].list);
+      const shelf = shelves[page];
+      if (shelf.source === 'installed' || shelf.loading || shelf.hits.length >= shelf.total) return;
+      if (list.scrollTop + list.clientHeight < list.scrollHeight - 240) return;
+      runSearch(page, true);
+    });
   }
 
   function onShelfQuery(page) {
