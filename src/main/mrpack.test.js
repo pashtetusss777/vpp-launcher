@@ -2,12 +2,13 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('crypto');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const os = require('os');
 const path = require('path');
 const zlib = require('zlib');
-const { applyOverrides, installDropped } = require('./mrpack');
+const { applyOverrides, installDropped, installIndex } = require('./mrpack');
 const { openZip, readEntry } = require('./zip');
 
 function zip(entries) {
@@ -103,6 +104,32 @@ test('a pack file at the instance root is installed', async () => {
   ]));
   await applyOverrides(pack, root);
   assert.equal(fs.readFileSync(path.join(root, 'command_history.txt'), 'utf8'), 'give @s apple\n');
+  await fsp.rm(root, { recursive: true, force: true });
+});
+
+test('a disabled pack mod is not downloaded again', async () => {
+  const root = await tempRoot();
+  const body = Buffer.from('mod-bytes');
+  const sha1 = crypto.createHash('sha1').update(body).digest('hex');
+  const index = {
+    game: 'minecraft',
+    files: [{
+      path: 'mods/MidnightControls.jar',
+      hashes: { sha1 },
+      fileSize: body.length,
+      downloads: ['https://cdn.modrinth.com/data/x/versions/y/MidnightControls.jar'],
+      env: { client: 'required' },
+    }],
+  };
+  const pack = path.join(root, 'pack.mrpack');
+  fs.writeFileSync(pack, zip([{ name: 'modrinth.index.json', data: JSON.stringify(index) }]));
+  const modsDir = path.join(root, 'mods');
+  await fsp.mkdir(modsDir);
+  await fsp.writeFile(path.join(modsDir, 'MidnightControls.jar.disabled'), body);
+  const applied = await installIndex(root, pack);
+  assert.equal(applied.missing.length, 0);
+  assert.equal(fs.existsSync(path.join(modsDir, 'MidnightControls.jar')), false);
+  assert.equal(fs.readFileSync(path.join(modsDir, 'MidnightControls.jar.disabled')).equals(body), true);
   await fsp.rm(root, { recursive: true, force: true });
 });
 

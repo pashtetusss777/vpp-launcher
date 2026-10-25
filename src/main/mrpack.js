@@ -145,6 +145,13 @@ async function fileMatches(abs, sha1, size) {
   }
 }
 
+// A switched-off mod is the same jar named *.jar.disabled. It is already here.
+async function haveFile(abs, sha1, size) {
+  if (await fileMatches(abs, sha1, size)) return true;
+  if (/\.jar$/i.test(abs)) return fileMatches(abs + '.disabled', sha1, size);
+  return false;
+}
+
 async function readIndexFromMrpack(mrpackPath) {
   const zip = await openZip(mrpackPath);
   const raw = await readEntry(zip, 'modrinth.index.json', 8 * 1048576);
@@ -275,7 +282,7 @@ async function installIndex(root, mrpackPath, { signal, report, previous, label 
   const missing = [];
   for (const file of wanted) {
     const abs = path.join(root, ...file.path.split('/'));
-    if (!await fileMatches(abs, file.sha1, file.size || null)) missing.push(file);
+    if (!await haveFile(abs, file.sha1, file.size || null)) missing.push(file);
   }
 
   if (missing.length) {
@@ -398,7 +405,7 @@ async function installCurse(root, archive, manifest, report) {
     if (!url) continue;
     const dest = path.join(mods.modsDir(root), filename);
     const sha1 = (file.hashes || []).find(h => h.algo === 1)?.value || '';
-    if (await fileMatches(dest, sha1, file.fileLength || null)) continue;
+    if (await haveFile(dest, sha1, file.fileLength || null)) continue;
     await downloadFile(url, dest, { sha1, size: file.fileLength || 0 });
     downloaded++;
   }
@@ -541,5 +548,6 @@ module.exports = {
   loadState,
   effectiveConfig,
   installDropped,
+  installIndex,
   applyOverrides,
 };
