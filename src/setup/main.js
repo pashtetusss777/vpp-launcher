@@ -15,6 +15,7 @@ const UNINSTALL_REG = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Unins
 const UNINSTALL_CMD = 'Uninstall.cmd';
 
 let win = null;
+let lastExe = '';
 
 function payloadPath() {
   if (!app.isPackaged) return path.join(__dirname, '..', '..', 'build', 'payload.zip');
@@ -227,6 +228,7 @@ async function install({ dir, desktop, startMenu }) {
   }
 
   send(1, 'Готово');
+  lastExe = exe;
   return { dir: target, exe };
 }
 
@@ -256,8 +258,9 @@ app.whenReady().then(() => {
     return result.canceled ? null : result.filePaths[0];
   });
   handle('setup:install', opts => install(opts || {}));
-  handle('setup:launch', exe => {
-    spawn(exe, [], { detached: true, stdio: 'ignore' }).unref();
+  handle('setup:launch', () => {
+    if (!lastExe) throw new Error('Сначала установите лаунчер');
+    spawn(lastExe, [], { detached: true, stdio: 'ignore' }).unref();
     app.quit();
   });
   handle('setup:close', () => app.quit());

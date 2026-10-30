@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const os = require('os');
@@ -59,14 +60,36 @@ function releaseInfo(data) {
   if (!version || cmp(version, VERSION) <= 0) return null;
   const asset = assetFor(data.assets || [], version);
   if (!asset?.browser_download_url) return null;
+  if (!downloadHostOk(asset.browser_download_url)) return null;
   return {
     version,
     name: asset.name,
     url: asset.browser_download_url,
     size: asset.size || 0,
+    sha256: digestOf(asset),
     notes: String(data.body || '').slice(0, 500),
     pre: !!data.prerelease,
   };
+}
+
+function downloadHostOk(url) {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase();
+    return u.protocol === 'https:' && (
+      host === 'github.com'
+      || host === 'objects.githubusercontent.com'
+      || host === 'release-assets.githubusercontent.com'
+      || host.endsWith('.githubusercontent.com')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function digestOf(asset) {
+  const m = /^sha256:([0-9a-f]{64})$/i.exec(String(asset?.digest || ''));
+  return m ? m[1].toLowerCase() : '';
 }
 
 async function latest(config, beta) {
@@ -104,9 +127,31 @@ async function download(info, dir, onProgress) {
     },
   });
   await pipeline(Readable.fromWeb(res.body), counter, fs.createWriteStream(tmp));
+  const st = await fsp.stat(tmp);
+  if (info.size > 0 && st.size !== info.size) {
+    await fsp.rm(tmp, { force: true });
+    throw new Error('Размер обновления не совпал');
+  }
+  if (info.sha256) {
+    const got = await sha256File(tmp);
+    if (got !== info.sha256) {
+      await fsp.rm(tmp, { force: true });
+      throw new Error('Контрольная сумма обновления не сошлась');
+    }
+  }
   await fsp.rm(dest, { force: true });
   await fsp.rename(tmp, dest);
   return dest;
+}
+
+function sha256File(file) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    fs.createReadStream(file)
+      .on('data', chunk => hash.update(chunk))
+      .on('error', reject)
+      .on('end', () => resolve(hash.digest('hex')));
+  });
 }
 
 function extract(archive, dest) {
@@ -311,6 +356,7 @@ async function check(config, beta) {
 async function install(config, beta, onProgress) {
   const info = pending || await latest(config, beta);
   if (!info) throw new Error('Обновление не найдено');
+  if (!info.sha256) throw new Error('У обновления нет контрольной суммы');
   const dir = path.join(electronApp().getPath('userData'), 'updates');
   await fsp.mkdir(dir, { recursive: true });
   await sweep(dir);
@@ -321,4 +367,4 @@ async function install(config, beta, onProgress) {
   return { ...result, version: info.version, file };
 }
 
-module.exports = { check, install, repoOf, cmp };
+module.exports = { check, install, repoOf, cmp, downloadHostOk, digestOf };

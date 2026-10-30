@@ -108,16 +108,23 @@ async function ping(address, timeout = 5000) {
             max: status.players?.max ?? null,
             motd: flatten(status.description).replace(/§./g, '').trim(),
             version: status.version?.name || '',
-            icon: typeof status.favicon === 'string' && status.favicon.startsWith('data:image/') ? status.favicon : null,
+            icon: iconOf(status),
           });
         }
       }
     });
     socket.on('close', () => {
-      if (status) finish(null, { latency: null, online: status.players?.online ?? null, max: status.players?.max ?? null, motd: '', version: status.version?.name || '', icon: status.favicon || null });
+      if (status) finish(null, { latency: null, online: status.players?.online ?? null, max: status.players?.max ?? null, motd: '', version: status.version?.name || '', icon: iconOf(status) });
       else finish(new Error('соединение закрыто'));
     });
   });
 }
 
-module.exports = { ping, parseAddress };
+function iconOf(status) {
+  const icon = status?.favicon;
+  if (typeof icon !== 'string' || icon.length > 200000) return null;
+  if (!icon.startsWith('data:image/') || /[\0-\x1f"<>]/.test(icon)) return null;
+  return icon;
+}
+
+module.exports = { ping, parseAddress, iconOf };

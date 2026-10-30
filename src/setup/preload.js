@@ -12,7 +12,7 @@ contextBridge.exposeInMainWorld('setup', {
   info: () => call('setup:info'),
   pick: () => call('setup:pick'),
   install: opts => call('setup:install', opts),
-  launch: exe => call('setup:launch', exe),
+  launch: () => call('setup:launch'),
   close: () => call('setup:close'),
   minimize: () => call('setup:minimize'),
   onProgress: fn => {

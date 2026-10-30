@@ -32,7 +32,7 @@
 
   $('#install').onclick = async () => {
     if (busy) {
-      if (installedExe) await api.launch(installedExe);
+      if (installedExe) await api.launch();
       return;
     }
     const dir = $('#dir').value.trim();

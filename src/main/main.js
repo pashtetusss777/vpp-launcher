@@ -404,6 +404,18 @@ async function openPath(which) {
   return shell.openPath(target);
 }
 
+function insideRoot(root, file) {
+  const base = path.resolve(root);
+  const full = path.resolve(file);
+  return full === base || full.startsWith(base + path.sep);
+}
+
+async function openGameFile(file) {
+  const target = path.resolve(String(file || ''));
+  if (!insideRoot(gameRoot(), target)) throw new Error('Путь вне папки игры');
+  return shell.openPath(target);
+}
+
 async function openLog() {
   const file = path.join(gameRoot(), 'logs', 'latest.log');
   if (await exists(file)) return shell.openPath(file);
@@ -749,7 +761,7 @@ function registerIpc() {
     if (await exists(pick.file)) return shell.openPath(pick.file);
     return 'Этого лога пока нет';
   });
-  handle('open:file', file => shell.openPath(file));
+  handle('open:file', file => openGameFile(file));
   handle('pick', kind => pickFile(kind));
   handle('background:set', file => setBackground(file));
   handle('ping', address => ping(address));

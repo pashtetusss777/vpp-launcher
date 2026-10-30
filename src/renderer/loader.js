@@ -115,7 +115,7 @@
       } else {
         el.style.backgroundSize = '';
         el.style.backgroundPosition = '';
-        el.style.backgroundImage = `${url}, ${url}`;
+    el.style.backgroundImage = `${url}, ${url}`;
       }
     };
     img.onerror = () => { if (el.dataset.skin === src) applyStock(); };
@@ -837,7 +837,7 @@
       const packs = rest.filter(f => /\.mrpack$/i.test(f.name) || (state.page === 'mods' && /\.zip$/i.test(f.name)));
       const zips = rest.filter(f => /\.zip$/i.test(f.name) && !packs.includes(f));
       if (jars.length && !packs.length) {
-        show('mods');
+      show('mods');
         setTimeout(() => addFiles(jars.map(f => api.pathOf(f)).filter(Boolean)), 250);
       }
       if (packs.length) {
@@ -2453,7 +2453,7 @@
 
   function serverIcon(s) {
     const info = pings[s.address];
-    if (info?.icon) return `<span class="srv-icon has-img"><img src="${info.icon}" alt=""></span>`;
+    if (info?.icon) return `<span class="srv-icon has-img"><img src="${esc(info.icon)}" alt=""></span>`;
     const h = hueOf(s.name || s.address);
     const tag = (s.name || s.address).replace(/[^A-Za-zА-Яа-я0-9]/g, '').slice(0, 2).toUpperCase();
     return `<span class="srv-icon" style="background:linear-gradient(135deg,hsl(${h} 55% 52%),hsl(${(h + 30) % 360} 60% 32%))">${esc(tag)}</span>`;

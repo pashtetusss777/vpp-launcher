@@ -14,6 +14,21 @@ const MS_DEVICE = 'https://login.microsoftonline.com/consumers/oauth2/v2.0/devic
 const MS_TOKEN = 'https://login.microsoftonline.com/consumers/oauth2/v2.0/token';
 const ELY = 'https://authserver.ely.by';
 
+function authlibUrl(url) {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase();
+    return u.protocol === 'https:' && (
+      host === 'authlib-injector.yushi.moe'
+      || host === 'github.com'
+      || host === 'objects.githubusercontent.com'
+      || host.endsWith('.githubusercontent.com')
+    );
+  } catch {
+    return false;
+  }
+}
+
 function dashed(id) {
   const h = String(id || '').replace(/-/g, '').toLowerCase();
   if (!/^[0-9a-f]{32}$/.test(h)) return String(id || '');
@@ -389,11 +404,13 @@ async function ensureAuthlib(root, signal) {
   }
   const meta = await fetchJson('https://authlib-injector.yushi.moe/artifact/latest.json', { signal });
   const url = meta.download_url || meta.downloadUrl;
-  if (!url) throw new Error('Не нашёл authlib-injector для входа Ely.by');
+  const sha = String(meta.checksums?.sha256 || meta.sha256 || '').toLowerCase();
+  if (!url || !/^[0-9a-f]{64}$/.test(sha) || !authlibUrl(url)) {
+    throw new Error('Не нашёл authlib-injector для входа Ely.by');
+  }
   const res = await fetchWithRetry(url, { signal });
   const buf = Buffer.from(await res.arrayBuffer());
-  const sha = meta.checksums?.sha256 || meta.sha256;
-  if (sha && crypto.createHash('sha256').update(buf).digest('hex') !== sha) {
+  if (crypto.createHash('sha256').update(buf).digest('hex') !== sha) {
     throw new Error('authlib-injector скачался с ошибкой - запустите ещё раз');
   }
   await fsp.mkdir(path.dirname(file), { recursive: true });
@@ -403,4 +420,4 @@ async function ensureAuthlib(root, signal) {
   return file;
 }
 
-module.exports = { loginEly, loginMicrosoft, freshen, ensureAuthlib, dashed, withSkin, uploadSkin };
+module.exports = { loginEly, loginMicrosoft, freshen, ensureAuthlib, dashed, withSkin, uploadSkin, authlibUrl };

@@ -4,6 +4,17 @@ const fs = require('fs');
 const path = require('path');
 const { offlineUuid } = require('./system');
 
+const MARK = 'enc1.';
+
+function locker() {
+  try {
+    const { safeStorage } = require('electron');
+    return safeStorage.isEncryptionAvailable() ? safeStorage : null;
+  } catch {
+    return null;
+  }
+}
+
 const DEFAULTS = {
   accounts: [],
   current: null,
@@ -35,7 +46,7 @@ class Settings {
     this.data = { ...DEFAULTS };
     let fresh = false;
     try {
-      Object.assign(this.data, JSON.parse(fs.readFileSync(file, 'utf8')));
+      Object.assign(this.data, JSON.parse(unwrapPayload(fs.readFileSync(file))));
     } catch {
       fresh = true;
     }
@@ -70,7 +81,7 @@ class Settings {
     try {
       fs.mkdirSync(path.dirname(this.file), { recursive: true });
       const tmp = this.file + '.tmp';
-      fs.writeFileSync(tmp, JSON.stringify(this.data, null, 2));
+      fs.writeFileSync(tmp, writePayload(this.data));
       fs.renameSync(tmp, this.file);
     } catch (e) {
       console.error('settings not saved', e);
@@ -93,4 +104,19 @@ function normalizeAccounts(data) {
   data.current = current ? current.id : (accounts[0]?.id || null);
 }
 
-module.exports = { Settings, DEFAULTS, normalizeAccounts };
+function unwrapPayload(raw, box = locker()) {
+  const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(String(raw));
+  if (buf.length >= MARK.length && buf.subarray(0, MARK.length).toString() === MARK) {
+    if (!box) throw new Error('cannot decrypt settings');
+    return box.decryptString(Buffer.from(buf.subarray(MARK.length).toString('utf8'), 'base64'));
+  }
+  return buf.toString('utf8');
+}
+
+function writePayload(data, box = locker()) {
+  const text = JSON.stringify(data, null, 2);
+  if (!box) return text;
+  return MARK + box.encryptString(text).toString('base64');
+}
+
+module.exports = { Settings, DEFAULTS, normalizeAccounts, writePayload, unwrapPayload };
