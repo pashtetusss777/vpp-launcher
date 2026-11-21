@@ -10,3 +10,4 @@ client/*.jar
 .test-game-run.log
 *.log
 .cursor/
+README.md
