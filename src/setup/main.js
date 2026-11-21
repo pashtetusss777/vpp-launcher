@@ -6,6 +6,7 @@ const fsp = require('fs/promises');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const { pathToFileURL } = require('url');
+const { installTrustedZip } = require('./install');
 
 const VERSION = require('../../package.json').version;
 const APP_NAME = 'Vanilla++';
@@ -70,33 +71,6 @@ function createWindow() {
   }
 }
 
-function isInstallRoot(names) {
-  return names.includes(`${APP_NAME}.exe`)
-    || names.includes(UNINSTALL_CMD)
-    || names.includes('Uninstall Vanilla++.cmd');
-}
-
-async function prepareTarget(dir) {
-  let target = path.resolve(dir || defaultDir());
-  if (!target || target.length < 4) throw new Error('Укажите папку установки');
-  const base = path.basename(target).toLowerCase();
-  if (base !== 'vanilla++' && base !== 'vanillaplus' && base !== 'vanilla-plus') {
-    target = path.join(target, APP_NAME);
-  }
-  await fsp.mkdir(target, { recursive: true });
-  let names = [];
-  try {
-    names = await fsp.readdir(target);
-  } catch { /* empty */ }
-  if (!names.length) return target;
-  if (isInstallRoot(names)) {
-    await fsp.rm(target, { recursive: true, force: true });
-    await fsp.mkdir(target, { recursive: true });
-    return target;
-  }
-  throw new Error('Папка не пуста. Выберите пустую папку или предыдущую установку Vanilla++');
-}
-
 function regAdd(name, type, value) {
   const r = spawnSync('reg', ['add', UNINSTALL_REG, '/v', name, '/t', type, '/d', String(value), '/f'], {
     windowsHide: true,
@@ -157,17 +131,6 @@ async function writeUninstaller(target, exe) {
   return uninstaller;
 }
 
-async function extractZip(zip, dest, onProgress) {
-  await fsp.mkdir(dest, { recursive: true });
-  onProgress?.(0.08, 'Распаковываем файлы…');
-  await new Promise((resolve, reject) => {
-    const child = spawn('tar', ['-xf', zip, '-C', dest], { windowsHide: true });
-    child.on('error', reject);
-    child.on('exit', code => (code === 0 ? resolve() : reject(new Error(`Не удалось распаковать (код ${code})`))));
-  });
-  onProgress?.(0.85, 'Почти готово…');
-}
-
 async function writeShortcut(link, target, args = '') {
   try {
     shell.writeShortcutLink(link, {
@@ -205,12 +168,9 @@ async function install({ dir, desktop, startMenu }) {
     if (win && !win.isDestroyed()) win.webContents.send('setup:progress', { progress, text });
   };
 
-  send(0.04, 'Готовим папку…');
-  const target = await prepareTarget(dir);
-  await extractZip(zip, target, send);
-
+  send(0.08, 'Распаковываем файлы…');
+  const target = await installTrustedZip(dir, defaultDir(), zip);
   const exe = path.join(target, `${APP_NAME}.exe`);
-  if (!fs.existsSync(exe)) throw new Error('После распаковки не найден Vanilla++.exe');
 
   send(0.9, 'Ярлыки и удаление…');
   const uninstaller = await writeUninstaller(target, exe);

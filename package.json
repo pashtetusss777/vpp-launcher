@@ -11,6 +11,7 @@
   },
   "license": "GPL-3.0-only",
   "scripts": {
+    "test": "node --test src/main/*.test.js src/renderer/*.test.js src/setup/*.test.js",
     "start": "electron .",
     "setup": "electron src/setup/main.js",
     "icon": "java scripts/MakeIcon.java",
@@ -38,7 +39,9 @@
       "src/setup/assets/backdrop.jpg",
       "build/icon.png",
       "package.json",
-      "launcher.config.json"
+      "launcher.config.json",
+      "!src/**/*.test.js",
+      "!src/main/fixtures/**/*"
     ],
     "win": {
       "icon": "build/icon.png",

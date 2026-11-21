@@ -77,6 +77,9 @@ contextBridge.exposeInMainWorld('vanilla', {
   auth: {
     ely: (username, password) => call('auth:ely', username, password),
     skin: file => call('auth:skin', file),
+    use: id => call('accounts:use', id),
+    remove: id => call('accounts:remove', id),
+    offline: name => call('accounts:offline', name),
     microsoft: () => call('auth:microsoft'),
     microsoftCancel: () => call('auth:microsoft-cancel'),
     onDevice: fn => on('auth:device', fn),

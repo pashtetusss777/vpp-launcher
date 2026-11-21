@@ -17,14 +17,23 @@ function varint(value) {
 
 function readVarint(buf, offset) {
   let value = 0, shift = 0, pos = offset;
-  while (true) {
+  while (pos < offset + 5) {
     if (pos >= buf.length) return null;
     const b = buf[pos++];
+    if (shift === 28 && (b & 0xf0)) throw new Error('битый ответ');
     value |= (b & 0x7f) << shift;
-    if ((b & 0x80) === 0) return { value, size: pos - offset };
+    if ((b & 0x80) === 0) return { value: value >>> 0, size: pos - offset };
     shift += 7;
-    if (shift > 35) throw new Error('битый ответ');
   }
+  throw new Error('битый ответ');
+}
+
+function statusOf(body, offset) {
+  const length = readVarint(body, offset);
+  if (!length || offset + length.size + length.value !== body.length) throw new Error('битый ответ');
+  const status = JSON.parse(body.toString('utf8', offset + length.size));
+  if (!status || typeof status !== 'object' || Array.isArray(status)) throw new Error('битый ответ');
+  return status;
 }
 
 function packet(id, ...parts) {
@@ -62,6 +71,7 @@ function flatten(component) {
 // Server list ping: what the multiplayer screen shows, players and latency
 async function ping(address, timeout = 5000) {
   const target = await resolve(address);
+  if (!Number.isInteger(target.port) || target.port < 1 || target.port > 65535) throw new Error('Некорректный порт');
   return new Promise((resolvePing, reject) => {
     const socket = net.createConnection({ host: target.host, port: target.port });
     let buffer = Buffer.alloc(0), status = null, sentAt = 0, done = false;
@@ -81,36 +91,39 @@ async function ping(address, timeout = 5000) {
       socket.write(packet(0x00));
     });
     socket.on('data', chunk => {
+      if (done) return;
+      if (buffer.length + chunk.length > 1024 * 1024) return finish(new Error('битый ответ'));
       buffer = Buffer.concat([buffer, chunk]);
-      while (true) {
-        const len = readVarint(buffer, 0);
-        if (!len || buffer.length < len.size + len.value) return;
-        const body = buffer.subarray(len.size, len.size + len.value);
-        buffer = buffer.subarray(len.size + len.value);
-        const id = readVarint(body, 0);
-        if (!status && id.value === 0x00) {
-          const strLen = readVarint(body, id.size);
-          const json = body.toString('utf8', id.size + strLen.size, id.size + strLen.size + strLen.value);
-          try {
-            status = JSON.parse(json);
-          } catch {
-            finish(new Error('битый ответ'));
+      try {
+        while (true) {
+          const len = readVarint(buffer, 0);
+          if (!len) return;
+          if (len.value < 1 || len.value > 1024 * 1024) return finish(new Error('битый ответ'));
+          if (buffer.length < len.size + len.value) return;
+          const body = buffer.subarray(len.size, len.size + len.value);
+          buffer = buffer.subarray(len.size + len.value);
+          const id = readVarint(body, 0);
+          if (!id) return finish(new Error('битый ответ'));
+          if (!status && id.value === 0x00) {
+            status = statusOf(body, id.size);
+            const payload = Buffer.alloc(8);
+            payload.writeBigInt64BE(BigInt(Date.now()));
+            sentAt = Date.now();
+            socket.write(packet(0x01, payload));
+          } else if (status && id.value === 0x01) {
+            finish(null, {
+              latency: Date.now() - sentAt,
+              online: status.players?.online ?? null,
+              max: status.players?.max ?? null,
+              motd: flatten(status.description).replace(/§./g, '').trim(),
+              version: status.version?.name || '',
+              icon: iconOf(status),
+            });
             return;
           }
-          const payload = Buffer.alloc(8);
-          payload.writeBigInt64BE(BigInt(Date.now()));
-          sentAt = Date.now();
-          socket.write(packet(0x01, payload));
-        } else if (status && id.value === 0x01) {
-          finish(null, {
-            latency: Date.now() - sentAt,
-            online: status.players?.online ?? null,
-            max: status.players?.max ?? null,
-            motd: flatten(status.description).replace(/§./g, '').trim(),
-            version: status.version?.name || '',
-            icon: iconOf(status),
-          });
         }
+      } catch (e) {
+        finish(e instanceof Error ? e : new Error('битый ответ'));
       }
     });
     socket.on('close', () => {
@@ -127,4 +140,4 @@ function iconOf(status) {
   return icon;
 }
 
-module.exports = { ping, parseAddress, iconOf };
+module.exports = { ping, parseAddress, iconOf, readVarint, statusOf };

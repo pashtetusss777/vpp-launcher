@@ -7,51 +7,9 @@ const fs = require('fs');
 const fsp = require('fs/promises');
 const os = require('os');
 const path = require('path');
-const zlib = require('zlib');
-const { applyOverrides, installDropped, installIndex } = require('./mrpack');
+const { applyOverrides, installDropped, installIndex, safeRel, sync } = require('./mrpack');
 const { openZip, readEntry } = require('./zip');
-
-function zip(entries) {
-  const locals = [];
-  const centrals = [];
-  let offset = 0;
-  for (const entry of entries) {
-    const name = Buffer.from(entry.name);
-    const raw = Buffer.from(entry.data);
-    const stored = entry.method === 0 || entry.method === 9;
-    const comp = stored ? raw : zlib.deflateRawSync(raw);
-    const method = entry.method == null ? 8 : entry.method;
-    const claimed = entry.uncompressed == null ? raw.length : entry.uncompressed;
-    const local = Buffer.alloc(30);
-    local.writeUInt32LE(0x04034b50, 0);
-    local.writeUInt16LE(20, 4);
-    local.writeUInt16LE(method, 8);
-    local.writeUInt32LE(comp.length, 18);
-    local.writeUInt32LE(claimed, 22);
-    local.writeUInt16LE(name.length, 26);
-    const chunk = Buffer.concat([local, name, comp]);
-    locals.push(chunk);
-    const central = Buffer.alloc(46);
-    central.writeUInt32LE(0x02014b50, 0);
-    central.writeUInt16LE(20, 4);
-    central.writeUInt16LE(20, 6);
-    central.writeUInt16LE(method, 10);
-    central.writeUInt32LE(comp.length, 20);
-    central.writeUInt32LE(claimed, 24);
-    central.writeUInt16LE(name.length, 28);
-    central.writeUInt32LE(offset, 42);
-    centrals.push(Buffer.concat([central, name]));
-    offset += chunk.length;
-  }
-  const dir = Buffer.concat(centrals);
-  const eocd = Buffer.alloc(22);
-  eocd.writeUInt32LE(0x06054b50, 0);
-  eocd.writeUInt16LE(entries.length, 8);
-  eocd.writeUInt16LE(entries.length, 10);
-  eocd.writeUInt32LE(dir.length, 12);
-  eocd.writeUInt32LE(offset, 16);
-  return Buffer.concat([...locals, dir, eocd]);
-}
+const zip = require('./fixtures/zip');
 
 async function tempRoot() {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'vpp-mrpack-'));
@@ -166,4 +124,52 @@ test('inflate stops at the size written in the archive', async () => {
   ]));
   await assert.rejects(async () => readEntry(await openZip(pack), 'overrides/options.txt', 1024));
   await fsp.rm(root, { recursive: true, force: true });
+});
+
+test('protected paths cannot hide behind dot segments or Windows aliases', () => {
+  for (const rel of ['../../outside', 'launcher/pack.json', '././launcher/pack.json',
+    'config/../../runtime/java', 'launcher./pack.json', 'launcher /pack.json', 'NUL', 'config/CON.txt',
+    'config\\..\\launcher\\pack.json', 'C:\\outside', '/outside', '', '.', './']) {
+    assert.throws(() => safeRel(rel), /Небезопасный путь/, rel);
+  }
+  assert.equal(safeRel('././config/test.json'), 'config/test.json');
+  assert.equal(safeRel('command_history.txt'), 'command_history.txt');
+});
+
+test('a valid ZIP finishes adding its jars before staging is removed', async t => {
+  const root = await tempRoot();
+  t.after(() => fsp.rm(root, { recursive: true, force: true }));
+  const jar = zip([{ name: 'fabric.mod.json', data: JSON.stringify({ id: 'example', name: 'Example', version: '1' }) }]);
+  const archive = path.join(root, 'mods.zip');
+  await fsp.writeFile(archive, zip([{ name: 'mods/example.jar', data: jar }]));
+  const result = await installDropped(root, archive, '26.2');
+  assert.equal(result.results[0].error, undefined);
+  assert.deepEqual(await fsp.readFile(path.join(root, 'mods', 'example.jar')), jar);
+  assert.equal(fs.existsSync(path.join(root, 'launcher', 'import-staging')), false);
+});
+
+test('unchanged packs preserve player configuration; a new pack applies its defaults', async t => {
+  const root = await tempRoot();
+  t.after(() => fsp.rm(root, { recursive: true, force: true }));
+  const config = { minecraft: 'old', pack: { modrinthProject: 'example' } };
+  const pack = zip([
+    { name: 'modrinth.index.json', data: JSON.stringify({ game: 'minecraft', files: [], dependencies: { minecraft: '26.2' } }) },
+    { name: 'overrides/options.txt', data: 'pack-defaults' },
+  ]);
+  const cache = path.join(root, 'launcher', 'mrpack');
+  await fsp.mkdir(cache, { recursive: true });
+  await fsp.writeFile(path.join(cache, 'v1.mrpack'), pack);
+  let id = 'v1';
+  t.mock.method(globalThis, 'fetch', async () => Response.json([{
+    id, version_number: id, files: [{ filename: 'pack.mrpack', url: 'https://cdn.modrinth.com/example.mrpack',
+      size: pack.length, hashes: { sha1: crypto.createHash('sha1').update(pack).digest('hex') } }],
+  }]));
+  assert.equal((await sync(root, config)).config.minecraft, '26.2');
+  await fsp.writeFile(path.join(root, 'options.txt'), 'player-choice');
+  await sync(root, config);
+  assert.equal(await fsp.readFile(path.join(root, 'options.txt'), 'utf8'), 'player-choice');
+  id = 'v2';
+  await fsp.writeFile(path.join(cache, 'v2.mrpack'), pack);
+  await sync(root, config);
+  assert.equal(await fsp.readFile(path.join(root, 'options.txt'), 'utf8'), 'pack-defaults');
 });

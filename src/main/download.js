@@ -14,7 +14,8 @@ class Downloader {
   constructor({ concurrency = 8, signal, onProgress, seeds = {} } = {}) {
     this.concurrency = concurrency;
     this.seeds = seeds;
-    this.signal = signal;
+    this.abort = new AbortController();
+    this.signal = signal ? AbortSignal.any([signal, this.abort.signal]) : this.abort.signal;
     this.onProgress = onProgress || (() => {});
     this.lastReport = 0;
   }
@@ -122,14 +123,23 @@ class Downloader {
 
   async pool(items, limit, worker) {
     let next = 0;
+    let failure;
     const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
       while (next < items.length) {
         if (this.signal?.aborted) throw this.signal.reason || new Error('Отменено');
         const item = items[next++];
-        await worker(item);
+        try {
+          await worker(item);
+        } catch (e) {
+          failure ||= e;
+          this.abort.abort(e);
+          throw e;
+        }
       }
     });
-    await Promise.all(runners);
+    const results = await Promise.allSettled(runners);
+    const rejected = results.find(result => result.status === 'rejected');
+    if (rejected) throw failure || rejected.reason;
   }
 }
 

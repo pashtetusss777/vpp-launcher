@@ -18,7 +18,8 @@
     "src/renderer/assets/logo.png",
     "src/setup/assets/backdrop.jpg",
     "build/icon.png",
-    "package.json"
+    "package.json",
+    "!src/**/*.test.js"
   ],
   "extraResources": [
     {

@@ -6,6 +6,7 @@
   'use strict';
 
   const api = window.vanilla;
+  const { rgbToHsl, hslToRgb, accentText, petalShade } = window.launcherColors;
   const $ = (s, root = document) => root.querySelector(s);
   const $$ = (s, root = document) => [...root.querySelectorAll(s)];
   const win = $('#win');
@@ -301,8 +302,9 @@
 
   // what drifts through the air: petals falling past the sakura, the End's dust rising slowly
   const canvas = $('#petals'), ctx = canvas.getContext('2d');
-  const PETAL_COLORS = ['#f6c1d3', '#eea6bf', '#f9d4e2', '#e58fb0', '#f3b3c8'];
   const DUST_COLORS = ['#cdb8ff', '#b79cff', '#e4d8ff', '#a98cf5'];
+  // petal shades are mixes of the live accent toward white (one slightly dark) — sakura was just one accent
+  const PETAL_SHADES = [0.45, 0.1, 0.62, -0.1, 0.28];
   let particleKind = 'petals';
   const petals = [];
   (function sizeCanvas() {
@@ -340,7 +342,7 @@
       flip: Math.random() * Math.PI * 2,
       flipSpeed: 1.5 + Math.random() * 2.5,
       rot: Math.random() * Math.PI,
-      color: PETAL_COLORS[(Math.random() * PETAL_COLORS.length) | 0],
+      shade: PETAL_SHADES[(Math.random() * PETAL_SHADES.length) | 0],
       alpha: .55 + depth * .4,
       fade: anywhere ? 0 : 1,
     };
@@ -393,7 +395,7 @@
       ctx.rotate(p.rot);
       ctx.scale(Math.cos(p.flip), 1);
       ctx.globalAlpha = p.alpha * p.fade;
-      ctx.fillStyle = p.color;
+      ctx.fillStyle = petalShade(accentNow, p.shade);
       ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size);
       ctx.restore();
     }
@@ -1498,10 +1500,6 @@
 
   function kindOf(a) { return KIND[a?.type] || 'Офлайн'; }
 
-  function saveAccounts() {
-    save({ accounts: state.accounts.map(a => ({ ...a })), current: state.accountId || null }, true);
-  }
-
   function renderSide() {
     const acc = state.accounts.find(a => a.id === state.accountId) || null;
     const box = $('#sideAvatar');
@@ -1574,32 +1572,39 @@
     renderAccounts();
   }
 
+  // Tokens never leave main; this list contains only public profile fields.
   function upsertAccount(account) {
     const i = state.accounts.findIndex(a => a.id === account.id);
     if (i >= 0) state.accounts[i] = account;
     else state.accounts.push(account);
     setCurrent(account.id);
-    saveAccounts();
   }
 
-  accList.addEventListener('click', e => {
+  accList.addEventListener('click', async e => {
     const wrap = e.target.closest('.row-wrap');
     if (!wrap) return;
     const id = wrap.dataset.acc;
     const acc = state.accounts.find(a => a.id === id);
     if (!acc) return;
     if (e.target.closest('[data-acc-remove]')) {
-      state.accounts = state.accounts.filter(a => a.id !== id);
-      if (id === state.accountId) setCurrent(state.accounts[0]?.id || '', { pop: false });
-      else renderAccounts();
-      saveAccounts();
-      status('accounts', 'trash', `Аккаунт ${acc.name} удалён`, 'bad');
+      try {
+        const next = await api.auth.remove(id);
+        state.accounts = (next.accounts || []).map(a => ({ ...a }));
+        setCurrent(next.current || '', { pop: false });
+        status('accounts', 'trash', `Аккаунт ${acc.name} удалён`, 'bad');
+      } catch (err) {
+        status('accounts', 'warn', err.message, 'warn');
+      }
       return;
     }
     if (id !== state.accountId) {
-      setCurrent(id);
-      saveAccounts();
-      status('accounts', 'check', `Теперь вы играете как ${acc.name}`, 'good');
+      try {
+        await api.auth.use(id);
+        setCurrent(id);
+        status('accounts', 'check', `Теперь вы играете как ${acc.name}`, 'good');
+      } catch (err) {
+        status('accounts', 'warn', err.message, 'warn');
+      }
     }
   });
 
@@ -1623,7 +1628,7 @@
   nickInput.addEventListener('input', checkNick);
   nickInput.addEventListener('keydown', e => { if (e.key === 'Enter') addAccount(); });
 
-  function addAccount() {
+  async function addAccount() {
     if (rollTarget) finishRoll();
     const v = nickInput.value.trim();
     if (!NICK.test(v)) {
@@ -1633,13 +1638,18 @@
       return;
     }
     const same = state.accounts.find(a => (a.type === 'offline' || !a.type) && a.name.toLowerCase() === v.toLowerCase());
-    if (same) {
-      setCurrent(same.id);
-      saveAccounts();
-      status('accounts', 'check', `Теперь вы играете как ${same.name}`, 'good');
-    } else {
-      upsertAccount({ id: `offline:${v.toLowerCase()}`, type: 'offline', name: v, uuid: uuidString(v) });
-      status('accounts', 'plus', `Ник ${v} добавлен и выбран`, 'good');
+    try {
+      if (same) {
+        await api.auth.use(same.id);
+        setCurrent(same.id);
+        status('accounts', 'check', `Теперь вы играете как ${same.name}`, 'good');
+      } else {
+        upsertAccount(await api.auth.offline(v));
+        status('accounts', 'plus', `Ник ${v} добавлен и выбран`, 'good');
+      }
+    } catch (e) {
+      status('accounts', 'warn', e.message, 'warn');
+      return;
     }
     nickInput.value = '';
     checkNick();
@@ -2016,44 +2026,6 @@
     candara: { label: 'Candara', stack: "Candara, 'Noto Sans', sans-serif", title: "Candara, 'Noto Sans', sans-serif" },
     constantia: { label: 'Constantia', stack: "Constantia, 'Noto Sans', serif", title: "Constantia, 'Noto Sans', serif" },
   };
-  function rgbToHsl(r, g, b) {
-    r /= 255; g /= 255; b /= 255;
-    const max = Math.max(r, g, b), min = Math.min(r, g, b);
-    let h, s, l = (max + min) / 2;
-    if (max === min) h = s = 0;
-    else {
-      const d = max - min;
-      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-      switch (max) {
-        case r: h = (g - b) / d + (g < b ? 6 : 0); break;
-        case g: h = (b - r) / d + 2; break;
-        case b: h = (r - g) / d + 4; break;
-      }
-      h /= 6;
-    }
-    return [h * 360, s, l];
-  }
-  function hslToRgb(h, s, l) {
-    h /= 360;
-    let r, g, b;
-    if (s === 0) r = g = b = l;
-    else {
-      const hue2rgb = (p, q, t) => {
-        if (t < 0) t += 1;
-        if (t > 1) t -= 1;
-        if (t < 1/6) return p + (q - p) * 6 * t;
-        if (t < 1/2) return q;
-        if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
-        return p;
-      };
-      const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-      const p = 2 * l - q;
-      r = hue2rgb(p, q, h + 1/3);
-      g = hue2rgb(p, q, h);
-      b = hue2rgb(p, q, h - 1/3);
-    }
-    return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
-  }
   let currentThemeMode = 'dark';
   function computeSmoke(rgb, isLight = (currentThemeMode === 'light')) {
     const [h, s, l] = rgbToHsl(...rgb);
@@ -2147,18 +2119,6 @@
     save({ accent: rgb, theme: null });
   }
 
-  function computeAccentText(rgb, isLight = (currentThemeMode === 'light')) {
-    if (!isLight) {
-      return `color-mix(in srgb, rgb(${rgb.join(' ')}) 65%, white)`;
-    }
-    const [h, s] = rgbToHsl(...rgb);
-    const isYellowGreen = h >= 35 && h <= 165;
-    const targetL = isYellowGreen ? 0.25 : 0.32;
-    const targetS = Math.min(0.85, Math.max(0.55, s * 0.9));
-    const darkRgb = hslToRgb(h, targetS, targetL);
-    return `rgb(${darkRgb.join(' ')})`;
-  }
-
   function computeBtnTextColor(rgb, isLight = (currentThemeMode === 'light')) {
     if (!isLight) return '#ffffff';
     const lum = 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2];
@@ -2178,7 +2138,7 @@
       smokeNow = fromSmoke.map((c, i) => Math.round(c + (toSmoke[i] - c) * e));
       document.documentElement.style.setProperty('--accent', accentNow.join(' '));
       document.documentElement.style.setProperty('--smoke', smokeNow.join(' '));
-      document.documentElement.style.setProperty('--accent-text', computeAccentText(accentNow));
+      document.documentElement.style.setProperty('--accent-text', accentText(accentNow, currentThemeMode === 'light'));
       document.documentElement.style.setProperty('--accent-btn-text', computeBtnTextColor(accentNow));
       if (t < 1) accentAnim = requestAnimationFrame(step);
     })(start);

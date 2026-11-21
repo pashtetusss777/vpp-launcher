@@ -44,14 +44,14 @@ function electronApp() {
   return require('electron').app;
 }
 
-function assetFor(assets, version) {
+function assetFor(assets, version, platform = process.platform, arch = process.arch, appImage = process.env.APPIMAGE) {
   const name = (suffix) => assets.find(a => a.name === `VanillaPlusPlus-${version}-${suffix}`);
-  if (process.platform === 'win32') return name('portable.zip');
-  if (process.platform === 'darwin') return name(process.arch === 'arm64' ? 'arm64.zip' : 'x64.zip');
-  if (process.env.APPIMAGE) {
-    return name(process.arch === 'arm64' ? 'arm64.AppImage' : 'x86_64.AppImage');
+  if (platform === 'win32') return name('portable.zip');
+  if (platform === 'darwin') return name(arch === 'arm64' ? 'arm64.zip' : 'x64.zip');
+  if (appImage) {
+    return name(`${arch === 'arm64' ? 'arm64' : 'x64'}.AppImage`);
   }
-  if (process.arch === 'arm64') return name('arm64.tar.gz') || name('aarch64.pacman');
+  if (arch === 'arm64') return name('arm64.tar.gz') || name('aarch64.pacman');
   return name('x64.tar.gz') || name('x64.pacman') || name('amd64.deb');
 }
 
@@ -367,4 +367,4 @@ async function install(config, beta, onProgress) {
   return { ...result, version: info.version, file };
 }
 
-module.exports = { check, install, repoOf, cmp, downloadHostOk, digestOf };
+module.exports = { check, install, repoOf, cmp, downloadHostOk, digestOf, assetFor };

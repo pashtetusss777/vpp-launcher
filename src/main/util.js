@@ -24,6 +24,19 @@ async function readJson(file, fallback = null) {
   }
 }
 
+async function readTail(file, maxBytes) {
+  const handle = await fsp.open(file, 'r');
+  try {
+    const { size } = await handle.stat();
+    const start = Math.max(0, size - maxBytes);
+    const buf = Buffer.alloc(Math.min(size, maxBytes));
+    const { bytesRead } = await handle.read(buf, 0, buf.length, start);
+    return buf.subarray(0, bytesRead);
+  } finally {
+    await handle.close();
+  }
+}
+
 async function writeJson(file, value) {
   await fsp.mkdir(path.dirname(file), { recursive: true });
   const tmp = file + '.tmp';
@@ -140,6 +153,6 @@ function formatBytes(bytes) {
 }
 
 module.exports = {
-  USER_AGENT, exists, readJson, writeJson, sha1File, fetchWithRetry, fetchJson, fetchText, cachedJson,
+  USER_AGENT, exists, readJson, readTail, writeJson, sha1File, fetchWithRetry, fetchJson, fetchText, cachedJson,
   mavenPath, mavenKey, osName, rulesAllow, formatBytes,
 };

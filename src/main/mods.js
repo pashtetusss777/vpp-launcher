@@ -97,11 +97,27 @@ async function add(root, mc, files) {
       continue;
     }
     const same = existing.find(m => m.id === info.id);
-    if (same) {
-      // a newer file of the same mod takes the old one's place
-      await fsp.rm(path.join(dir, same.file + (same.enabled ? '' : '.disabled')), { force: true });
+    const target = path.join(dir, name);
+    if (path.resolve(source) === path.resolve(target)) {
+      results.push({ file: name, name: info.name, replaced: false });
+      continue;
     }
-    await fsp.copyFile(source, path.join(dir, name));
+    const staging = await fsp.mkdtemp(path.join(dir, '.incoming-'));
+    const staged = path.join(staging, name);
+    try {
+      await fsp.copyFile(source, staged);
+      // Rename replaces the destination only once the new file is complete.
+      await fsp.rename(staged, target);
+      if (same && same.file + (same.enabled ? '' : '.disabled') !== name) {
+        await fsp.rm(path.join(dir, same.file + (same.enabled ? '' : '.disabled')), { force: true });
+      }
+      const index = existing.findIndex(m => m.id === info.id);
+      const next = { ...info, file: name, enabled: true };
+      if (index < 0) existing.push(next);
+      else existing[index] = next;
+    } finally {
+      await fsp.rm(staging, { recursive: true, force: true });
+    }
     results.push({ file: name, name: info.name, replaced: !!same });
   }
   return results;

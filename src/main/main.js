@@ -6,7 +6,7 @@ const fsp = require('fs/promises');
 const path = require('path');
 const { pathToFileURL } = require('url');
 
-const { Settings } = require('./settings');
+const { Settings, publicAccount } = require('./settings');
 const system = require('./system');
 const mods = require('./mods');
 const packs = require('./packs');
@@ -17,7 +17,8 @@ const { ping } = require('./ping');
 const auth = require('./auth');
 const updater = require('./updater');
 const uninstall = require('./uninstall');
-const { exists } = require('./util');
+const { exists, readTail } = require('./util');
+const { MAX_LOG_BYTES, flattenLog4j, takeLogLines } = require('./logs');
 
 const APP_ROOT = path.join(__dirname, '..', '..');
 const config = JSON.parse(fs.readFileSync(path.join(APP_ROOT, 'launcher.config.json'), 'utf8'));
@@ -181,7 +182,7 @@ async function init() {
     accounts.push(account);
   }
   if (skinsChanged) settings.update({ accounts });
-  const view = skinsChanged ? settings.get() : s;
+  const view = settings.view();
   const root = gameRoot();
   const packState = await mrpack.loadState(root);
   const packConfig = mrpack.effectiveConfig(config, packState);
@@ -272,7 +273,7 @@ async function launch(server) {
     session.stopping = false;
     session.outputFile = outputFile;
     session.startedAt = Date.now();
-    settings.update({ lastLaunch: { at: session.startedAt, server: server || null, account } });
+    settings.update({ lastLaunch: { at: session.startedAt, server: server || null } });
     log('started', started.command.java, 'pid', started.child.pid);
     setPhase('running', { downloaded: prepared.downloaded });
     started.child.on('exit', code => onExit(code));
@@ -349,7 +350,7 @@ async function onExit(code) {
 async function outputTail(file) {
   let text;
   try {
-    text = await fsp.readFile(file, 'utf8');
+    text = (await readTail(file, MAX_LOG_BYTES)).toString('utf8');
   } catch {
     return '';
   }
@@ -441,34 +442,6 @@ function decodeLogText(buf) {
   return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
 
-function flattenLog4j(text) {
-  if (!text.includes('<log4j:')) return text;
-  const lines = [];
-  const re = /<log4j:Event\b([^>]*)>[\s\S]*?<log4j:Message><!\[CDATA\[([\s\S]*?)\]\]>[\s\S]*?(?:<log4j:Throwable><!\[CDATA\[([\s\S]*?)\]\]>)?[\s\S]*?<\/log4j:Event>/g;
-  let m;
-  let matched = false;
-  while ((m = re.exec(text))) {
-    matched = true;
-    const attrs = m[1] || '';
-    const level = (attrs.match(/\blevel="([^"]+)"/i) || [])[1] || 'INFO';
-    const logger = (attrs.match(/\blogger="([^"]+)"/i) || [])[1] || '';
-    const stamp = (attrs.match(/\btimestamp="(\d+)"/i) || [])[1];
-    const time = stamp
-      ? new Date(+stamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
-      : '';
-    const head = time ? `[${time}] [${logger || 'main'}/${level}]` : `[${logger || 'main'}/${level}]`;
-    for (const line of String(m[2] || '').split('\n')) lines.push(`${head}: ${line}`);
-    if (m[3]) for (const line of String(m[3]).split('\n')) lines.push(line);
-  }
-  if (!matched) {
-    const loose = /<log4j:(?:Message|Throwable)><!\[CDATA\[([\s\S]*?)\]\]>/g;
-    while ((m = loose.exec(text))) lines.push(...m[1].split('\n'));
-  }
-  const rest = text.replace(/<log4j:Event[\s\S]*?<\/log4j:Event>/g, '').trim();
-  if (rest) lines.push(...rest.split('\n'));
-  return lines.join('\n');
-}
-
 async function readLog(id = 'game') {
   const root = gameRoot();
   const sources = [];
@@ -483,7 +456,7 @@ async function readLog(id = 'game') {
     sources.push({ id: source.id, name: source.name, exists: size > 0 || await exists(source.file), size, mtime });
   }
   const pick = logSources(root).find(s => s.id === id) || logSources(root)[0];
-  const maxBytes = 700 * 1024;
+  const maxBytes = MAX_LOG_BYTES;
   let text = '';
   let truncated = false;
   let size = 0;
@@ -558,22 +531,6 @@ function watchLogFile() {
   }
 }
 
-function takeLogLines(id, text) {
-  logFollow.pending += text;
-  const buf = logFollow.pending;
-  if (id === 'output' && buf.includes('<log4j:')) {
-    const end = buf.lastIndexOf('</log4j:Event>');
-    if (end < 0) return '';
-    const cut = end + '</log4j:Event>'.length;
-    logFollow.pending = buf.slice(cut);
-    return flattenLog4j(buf.slice(0, cut));
-  }
-  const nl = buf.lastIndexOf('\n');
-  if (nl < 0) return '';
-  logFollow.pending = buf.slice(nl + 1);
-  return buf.slice(0, nl + 1);
-}
-
 async function pumpLog() {
   const gen = logFollow.gen;
   const { file, id } = logFollow;
@@ -599,7 +556,7 @@ async function pumpLog() {
   try { await handle.read(buf, 0, len, start); } finally { await handle.close(); }
   if (gen !== logFollow.gen) return;
   logFollow.offset = start + len;
-  const text = takeLogLines(id, decodeLogText(buf));
+  const text = takeLogLines(logFollow, id, decodeLogText(buf));
   if (text) send('logs:chunk', { id, text });
   if (logFollow.offset < stat.size) scheduleLogPump();
 }
@@ -656,12 +613,11 @@ function handle(channel, fn) {
 
 let installChain = Promise.resolve();
 
-async function installProject(source, kind, projectId, seen, versionId) {
+async function installProject(source, kind, projectId, seen, versionId, context) {
   const key = `${source}:${kind}:${projectId}`;
   if (seen.has(key)) return [];
   seen.add(key);
-  const root = gameRoot();
-  const mc = config.minecraft;
+  const { root, mc } = context;
   const file = await catalog.resolve(source, kind, projectId, mc, versionId);
   const dir = path.join(root, 'launcher', 'incoming', `${Date.now()}-${Math.random().toString(16).slice(2)}`);
   const tmp = path.join(dir, packs.safeName(file.filename));
@@ -684,7 +640,7 @@ async function installProject(source, kind, projectId, seen, versionId) {
   }
   if (kind === 'mod') {
     for (const dep of (file.dependencies || []).slice(0, 8)) {
-      names.push(...await installProject(dep.source, 'mod', dep.id, seen));
+      names.push(...await installProject(dep.source, 'mod', dep.id, seen, undefined, context));
     }
   }
   return names;
@@ -692,14 +648,17 @@ async function installProject(source, kind, projectId, seen, versionId) {
 
 async function installCatalog(source, kind, projectId, versionId) {
   const run = async () => {
-    const names = await installProject(source, kind, projectId, new Set(), versionId);
+    const root = gameRoot();
+    const mc = mrpack.effectiveConfig(config, await mrpack.loadState(root)).minecraft;
+    const context = { root, mc };
+    const names = await installProject(source, kind, projectId, new Set(), versionId, context);
     let iris = false;
     const extra = names.slice(1);
     if (kind === 'shader') {
-      const have = (await mods.list(gameRoot(), config.minecraft)).find(mod => mod.id === 'iris');
-      if (have && !have.enabled) await mods.setEnabled(gameRoot(), have.file, true);
+      const have = (await mods.list(root, mc)).find(mod => mod.id === 'iris');
+      if (have && !have.enabled) await mods.setEnabled(root, have.file, true);
       if (!have) {
-        extra.push(...await installProject('modrinth', 'mod', 'iris', new Set()));
+        extra.push(...await installProject('modrinth', 'mod', 'iris', new Set(), undefined, context));
         iris = true;
       }
     }
@@ -712,7 +671,12 @@ async function installCatalog(source, kind, projectId, versionId) {
 
 function registerIpc() {
   handle('init', init);
-  handle('settings:update', patch => settings.update(patch));
+  handle('settings:update', patch => {
+    const allowed = { ...patch };
+    for (const key of ['accounts', 'current', 'lastLaunch']) delete allowed[key];
+    settings.update(allowed);
+    return settings.view();
+  });
   handle('system:memory', () => system.memory());
   async function liveConfig() {
     return mrpack.effectiveConfig(config, await mrpack.loadState(gameRoot()));
@@ -765,17 +729,20 @@ function registerIpc() {
   handle('pick', kind => pickFile(kind));
   handle('background:set', file => setBackground(file));
   handle('ping', address => ping(address));
-  handle('auth:ely', (username, password) => auth.loginEly(username, password));
-  handle('auth:microsoft', () => {
+  handle('accounts:offline', name => settings.addOffline(name));
+  handle('accounts:use', id => settings.selectAccount(id));
+  handle('accounts:remove', id => settings.removeAccount(id));
+  handle('auth:ely', async (username, password) => publicAccount(rememberAccount(await auth.loginEly(username, password))));
+  handle('auth:microsoft', async () => {
     msAbort?.abort();
     msAbort = new AbortController();
-    return auth.loginMicrosoft({
+    return publicAccount(rememberAccount(await auth.loginMicrosoft({
       signal: msAbort.signal,
       onCode: info => {
         send('auth:device', info);
         if (info.verificationUri) shell.openExternal(info.verificationUri).catch(() => {});
       },
-    });
+    })));
   });
   handle('auth:microsoft-cancel', () => msAbort?.abort());
   handle('skin:image', async url => {
@@ -795,7 +762,7 @@ function registerIpc() {
     if (!account || (account.type !== 'microsoft' && account.type !== 'ely')) {
       throw new Error('Сменить скин можно у лицензии Microsoft и у Ely.by');
     }
-    return rememberAccount(await auth.uploadSkin(account, file));
+    return publicAccount(rememberAccount(await auth.uploadSkin(account, file)));
   });
   handle('window:minimize', () => win?.minimize());
   handle('window:close', () => {
@@ -825,6 +792,9 @@ app.whenReady().then(() => {
   createWindow();
   mods.emptyTrash(gameRoot(), f => shell.trashItem(f)).catch(() => {});
   packs.emptyTrash(gameRoot(), f => shell.trashItem(f)).catch(() => {});
+}).catch(e => {
+  dialog.showErrorBox('Не удалось открыть Vanilla++', String(e.message || e));
+  app.quit();
 });
 
 app.on('before-quit', () => {

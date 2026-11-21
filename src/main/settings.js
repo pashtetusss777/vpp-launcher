@@ -43,19 +43,27 @@ const DEFAULTS = {
 class Settings {
   constructor(file, seeded) {
     this.file = file;
-    this.data = { ...DEFAULTS };
+    this.data = { ...DEFAULTS, accounts: [] };
     let fresh = false;
     try {
-      Object.assign(this.data, JSON.parse(unwrapPayload(fs.readFileSync(file))));
-    } catch {
+      const stored = JSON.parse(unwrapPayload(fs.readFileSync(file)));
+      if (!stored || typeof stored !== 'object' || Array.isArray(stored)
+        || (stored.accounts !== undefined && !Array.isArray(stored.accounts))) throw new Error('Invalid settings');
+      Object.assign(this.data, stored);
+    } catch (e) {
+      if (e.code !== 'ENOENT') {
+        throw new Error('Не удалось прочитать настройки. Файл сохранён без изменений; восстановите резервную копию.', { cause: e });
+      }
       fresh = true;
     }
     if (fresh && seeded && typeof seeded === 'object') {
       for (const [key, value] of Object.entries(seeded)) {
-        if (key in DEFAULTS) this.data[key] = value;
+        if (Object.hasOwn(DEFAULTS, key)) this.data[key] = value;
       }
     }
     normalizeAccounts(this.data);
+    // Keep the pre-migration profile before the first encrypted save.
+    if (!fresh && !fs.existsSync(file + '.bak')) fs.copyFileSync(file, file + '.bak', fs.constants.COPYFILE_EXCL);
     this.timer = null;
   }
 
@@ -63,9 +71,42 @@ class Settings {
     return this.data;
   }
 
+  view() {
+    return {
+      ...this.data,
+      accounts: this.data.accounts.map(publicAccount),
+      lastLaunch: this.data.lastLaunch ? {
+        at: this.data.lastLaunch.at, server: this.data.lastLaunch.server,
+      } : null,
+    };
+  }
+
+  selectAccount(id) {
+    if (!this.data.accounts.some(account => account.id === id)) throw new Error('Аккаунт не найден');
+    this.update({ current: id });
+    return this.view();
+  }
+
+  removeAccount(id) {
+    const accounts = this.data.accounts.filter(account => account.id !== id);
+    this.update({ accounts, current: this.data.current === id ? accounts[0]?.id || null : this.data.current });
+    return this.view();
+  }
+
+  addOffline(name) {
+    if (typeof name !== 'string' || !/^[A-Za-z0-9_]{3,16}$/.test(name)) throw new Error('Некорректный ник');
+    const id = `offline:${name.toLowerCase()}`;
+    const accounts = this.data.accounts.slice();
+    if (!accounts.some(account => account.id === id)) {
+      accounts.push({ id, type: 'offline', name, uuid: offlineUuid(name) });
+    }
+    this.update({ accounts, current: id });
+    return publicAccount(accounts.find(account => account.id === id));
+  }
+
   update(patch) {
     for (const [key, value] of Object.entries(patch || {})) {
-      if (key in DEFAULTS) this.data[key] = value;
+      if (Object.hasOwn(DEFAULTS, key)) this.data[key] = value;
     }
     this.save();
     return this.data;
@@ -104,19 +145,41 @@ function normalizeAccounts(data) {
   data.current = current ? current.id : (accounts[0]?.id || null);
 }
 
+function publicAccount(account) {
+  const { id, type, name, uuid, skinUrl } = account;
+  return { id, type, name, uuid, skinUrl };
+}
+
 function unwrapPayload(raw, box = locker()) {
   const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(String(raw));
   if (buf.length >= MARK.length && buf.subarray(0, MARK.length).toString() === MARK) {
     if (!box) throw new Error('cannot decrypt settings');
     return box.decryptString(Buffer.from(buf.subarray(MARK.length).toString('utf8'), 'base64'));
   }
-  return buf.toString('utf8');
+  const text = buf.toString('utf8');
+  const data = JSON.parse(text);
+  if (!data.accountSecrets) return text;
+  if (!box || !String(data.accountSecrets).startsWith(MARK)) throw new Error('cannot decrypt account secrets');
+  const secrets = JSON.parse(box.decryptString(Buffer.from(data.accountSecrets.slice(MARK.length), 'base64')));
+  data.accounts = (data.accounts || []).map(account => ({
+    ...secrets.find(secret => secret.id === account.id), ...account,
+  }));
+  delete data.accountSecrets;
+  return JSON.stringify(data);
 }
 
 function writePayload(data, box = locker()) {
-  const text = JSON.stringify(data, null, 2);
-  if (!box) return text;
-  return MARK + box.encryptString(text).toString('base64');
+  if (!box) return JSON.stringify(data, null, 2);
+  const secrets = (data.accounts || []).map(({ id, accessToken, refreshToken, clientToken }) => ({
+    id, accessToken, refreshToken, clientToken,
+  }));
+  // Older builds must still see valid JSON, profiles and preferences instead of resetting everything.
+  return JSON.stringify({
+    ...data,
+    accounts: (data.accounts || []).map(({ accessToken, refreshToken, clientToken, ...profile }) => profile),
+    lastLaunch: data.lastLaunch ? { at: data.lastLaunch.at, server: data.lastLaunch.server } : null,
+    accountSecrets: MARK + box.encryptString(JSON.stringify(secrets)).toString('base64'),
+  }, null, 2);
 }
 
-module.exports = { Settings, DEFAULTS, normalizeAccounts, writePayload, unwrapPayload };
+module.exports = { Settings, DEFAULTS, normalizeAccounts, writePayload, unwrapPayload, publicAccount };

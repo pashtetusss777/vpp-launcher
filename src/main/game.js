@@ -101,7 +101,7 @@ function splitArgs(text) {
   return out;
 }
 
-function buildCommand({ root, prepared, settings, account, server, gameSession }) {
+function buildCommand({ root, prepared, settings, account, server }) {
   const { version, profile, vanilla, fabric } = prepared;
   const gameDir = root;
   const nativesDir = path.join(root, 'versions', version.id, 'natives');
@@ -158,8 +158,8 @@ function buildCommand({ root, prepared, settings, account, server, gameSession }
   return { java: prepared.javaPath, args: [...jvm, profile.mainClass || version.mainClass, ...game], cwd: gameDir, nativesDir };
 }
 
-async function start({ root, prepared, settings, account, server, gameSession, detached, stdio }) {
-  const command = buildCommand({ root, prepared, settings, account, server, gameSession });
+async function start({ root, prepared, settings, account, server, detached, stdio }) {
+  const command = buildCommand({ root, prepared, settings, account, server });
   await fsp.mkdir(command.nativesDir, { recursive: true });
   for (const sub of ['java', 'jna', 'lwjgl', 'netty']) await fsp.mkdir(path.join(command.nativesDir, sub), { recursive: true });
   if (!await exists(command.java)) throw new Error(`Java не найдена: ${command.java}`);

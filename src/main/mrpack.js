@@ -37,12 +37,14 @@ async function saveState(root, state) {
 const PACK_DENY = new Set(['launcher', 'versions', 'libraries', 'runtime', 'assets']);
 
 function safeRel(rel) {
-  const n = String(rel || '').replace(/\\/g, '/').replace(/^\/+/, '').replace(/^\.\//, '');
-  const top = n.split('/')[0].toLowerCase();
-  if (!n || n.includes('..') || n.includes('\0') || n.includes(':') || PACK_DENY.has(top)) {
+  const n = String(rel || '').replace(/\\/g, '/').replace(/\/+$/, '');
+  const parts = n.split('/').filter(part => part && part !== '.');
+  const top = (parts[0] || '').toLowerCase();
+  if (!parts.length || n.startsWith('/') || n.includes('..') || n.includes('\0') || n.includes(':') || PACK_DENY.has(top)
+    || parts.some(part => /[. ]$/.test(part) || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(part))) {
     throw new Error(`Небезопасный путь в сборке: ${rel}`);
   }
-  return n;
+  return parts.join('/');
 }
 
 function packDownload(url) {
@@ -248,7 +250,7 @@ async function status(root, config) {
   };
 }
 
-async function installIndex(root, mrpackPath, { signal, report, previous, label = 'Ставим моды' } = {}) {
+async function installIndex(root, mrpackPath, { signal, report, previous, label = 'Ставим моды', applyPackOverrides = true } = {}) {
   const stage = (text, extra = {}) => report?.(text, extra);
   stage('Читаем состав сборки…');
   const index = await readIndexFromMrpack(mrpackPath);
@@ -322,7 +324,7 @@ async function installIndex(root, mrpackPath, { signal, report, previous, label 
   for (const rel of previous?.overrides || []) {
     try { prevOverrides.push(safeRel(rel)); } catch { /* ignore a path that could leave the game folder */ }
   }
-  const overrides = await applyOverrides(mrpackPath, root);
+  const overrides = applyPackOverrides ? await applyOverrides(mrpackPath, root) : (previous?.overrides || []);
   if (previous) {
     for (const rel of prevOverrides) {
       if (overrides.includes(rel)) continue;
@@ -364,7 +366,7 @@ async function installJarZip(root, archive, mc) {
       jars.push(dest);
     }
     if (!jars.length) throw new Error('В архиве нет модов. Нужен .mrpack или zip с файлами .jar');
-    return mods.add(root, mc, jars);
+    return await mods.add(root, mc, jars);
   } finally {
     await fsp.rm(staging, { recursive: true, force: true }).catch(() => {});
   }
@@ -489,6 +491,7 @@ async function sync(root, config, { signal, report } = {}) {
   const applied = await installIndex(root, mrpackPath, {
     signal,
     previous: local,
+    applyPackOverrides: local?.versionId !== versionId,
     label: 'Обновляем моды',
     report: (text, extra) => stage(text, extra),
   });
@@ -550,4 +553,5 @@ module.exports = {
   installDropped,
   installIndex,
   applyOverrides,
+  safeRel,
 };
