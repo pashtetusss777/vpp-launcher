@@ -9,10 +9,9 @@ const { pipeline } = require('stream/promises');
 const { fetchJson, fetchWithRetry, readJson, writeJson, exists } = require('./util');
 const mods = require('./mods');
 const packs = require('./packs');
+const { request: curse, fileUrl: curseUrl } = require('./curseforge');
 
 const MODRINTH = 'https://api.modrinth.com/v2';
-// The official CurseForge API wants a private key. This public proxy speaks the same API.
-const CURSE = 'https://api.curse.tools/v1/cf';
 
 const KINDS = {
   mod: { modrinth: 'mod', curse: 6, loader: true },
@@ -64,15 +63,6 @@ function httpsIcon(url) {
 
 function contentDir(root, kind) {
   return kind === 'mod' ? mods.modsDir(root) : packs.contentDir(root, kind);
-}
-
-async function curse(pathname) {
-  try {
-    return await fetchJson(CURSE + pathname);
-  } catch (e) {
-    if (e.status === 429) throw new Error('CurseForge просит подождать минуту');
-    throw new Error('CurseForge не ответил');
-  }
 }
 
 async function modrinth(pathname) {
@@ -294,13 +284,6 @@ function pickModrinth(versions, kind) {
 
 function rightExt(name, kind) {
   return kind === 'mod' ? /\.jar$/i.test(name) : /\.zip$/i.test(name);
-}
-
-function curseUrl(file) {
-  if (file.downloadUrl) return file.downloadUrl;
-  const id = String(file.id || '');
-  if (id.length < 5 || !file.fileName) return '';
-  return `https://edge.forgecdn.net/files/${id.slice(0, 4)}/${id.slice(4)}/${encodeURIComponent(file.fileName)}`;
 }
 
 function pickCurse(files, kind) {

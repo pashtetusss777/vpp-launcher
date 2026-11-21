@@ -148,6 +148,31 @@ test('a valid ZIP finishes adding its jars before staging is removed', async t =
   assert.equal(fs.existsSync(path.join(root, 'launcher', 'import-staging')), false);
 });
 
+test('CurseForge imports mirror metadata and file downloads while checking sha1', async t => {
+  const root = await tempRoot();
+  t.after(() => fsp.rm(root, { recursive: true, force: true }));
+  const body = Buffer.from('dummy-mod-file');
+  const sha1 = crypto.createHash('sha1').update(body).digest('hex');
+  const archive = path.join(root, 'curse.zip');
+  await fsp.writeFile(archive, zip([{ name: 'manifest.json', data: JSON.stringify({
+    manifestType: 'minecraftModpack', name: 'Example', files: [{ projectID: 12345, fileID: 1234567 }],
+  }) }]));
+  const urls = [];
+  t.mock.method(globalThis, 'fetch', async url => {
+    urls.push(url);
+    if (url === 'https://mod.mcimirror.top/curseforge/v1/mods/12345/files/1234567') {
+      return Response.json({ data: { id: 1234567, fileName: 'example.jar', fileLength: body.length,
+        downloadUrl: 'https://edge.forgecdn.net/files/1234/567/example.jar',
+        hashes: [{ algo: 1, value: sha1 }] } });
+    }
+    assert.equal(url, 'https://mod.mcimirror.top/files/1234/567/example.jar');
+    return new Response(body);
+  });
+  assert.equal((await installDropped(root, archive, '26.2')).downloaded, 1);
+  assert.deepEqual(await fsp.readFile(path.join(root, 'mods', 'example.jar')), body);
+  assert.equal(urls.length, 2);
+});
+
 test('unchanged packs preserve player configuration; a new pack applies its defaults', async t => {
   const root = await tempRoot();
   t.after(() => fsp.rm(root, { recursive: true, force: true }));

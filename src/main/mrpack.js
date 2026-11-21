@@ -11,6 +11,7 @@ const {
 } = require('./util');
 const { openZip, readEntry } = require('./zip');
 const mods = require('./mods');
+const curseforge = require('./curseforge');
 
 const MODRINTH = 'https://api.modrinth.com/v2';
 const STATE_FILE = 'launcher/pack.json';
@@ -372,12 +373,6 @@ async function installJarZip(root, archive, mc) {
   }
 }
 
-function curseCdn(file) {
-  const id = String(file.id || '');
-  if (id.length < 5 || !file.fileName) return '';
-  return `https://edge.forgecdn.net/files/${id.slice(0, 4)}/${id.slice(4)}/${encodeURIComponent(file.fileName)}`;
-}
-
 async function installCurse(root, archive, manifest, report) {
   const stage = (text, extra = {}) => report?.(text, extra);
     const files = (manifest.files || []).filter(f => {
@@ -389,21 +384,11 @@ async function installCurse(root, archive, manifest, report) {
   for (let i = 0; i < files.length; i++) {
     const entry = files[i];
     stage(`Ставим моды · ${i + 1} из ${files.length}`, { done: i, total: files.length });
-    let info;
-    try {
-      info = await fetchJson(`https://api.curse.tools/v1/cf/mods/${entry.projectID}/files/${entry.fileID}`);
-    } catch {
-      throw new Error('CurseForge не ответил');
-    }
+    const info = await curseforge.request(`/mods/${entry.projectID}/files/${entry.fileID}`);
     const file = info?.data;
     const filename = path.basename(String(file?.fileName || ''));
     if (!file || !/\.jar$/i.test(filename)) continue;
-    let url = '';
-    try {
-      const host = new URL(String(file.downloadUrl || '')).hostname.toLowerCase();
-      if (/^https:\/\//i.test(file.downloadUrl) && (host === 'edge.forgecdn.net' || host.endsWith('.forgecdn.net'))) url = file.downloadUrl;
-    } catch { /* the CDN built from the file id is the fallback */ }
-    if (!url) url = curseCdn(file);
+    const url = curseforge.fileUrl(file);
     if (!url) continue;
     const dest = path.join(mods.modsDir(root), filename);
     const sha1 = (file.hashes || []).find(h => h.algo === 1)?.value || '';

@@ -5,7 +5,7 @@ const fsp = require('fs/promises');
 const path = require('path');
 const crypto = require('crypto');
 
-const USER_AGENT = 'VanillaPlus/1.1 (+https://github.com/Loadstring4EVER)';
+const USER_AGENT = `VanillaPlusPlus/${require('../../package.json').version} (+https://github.com/pashtetusss777/vpp-launcher)`;
 
 async function exists(file) {
   try {
