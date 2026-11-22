@@ -1,7 +1,6 @@
 'use strict';
 
 const { execFile } = require('child_process');
-const path = require('path');
 
 // Windows keeps per-app GPU choices (the same ones from Settings > Display > Graphics)
 // under HKCU, so a user-level write is enough. One value per Java path; nothing else is touched.
@@ -45,9 +44,10 @@ async function preferDiscrete(exe) {
 }
 
 // Values for the bundled runtime and for the player's custom Java path; other
-// programs' preferences are left completely alone.
+// programs' preferences are left completely alone. Registry value names are
+// always Windows paths, so the separator is a literal backslash.
 function ownedPaths(paths, rootPrefix, customJava) {
-  return (paths || []).filter(p => p === customJava || p.startsWith(rootPrefix + path.sep));
+  return (paths || []).filter(p => p === customJava || p.startsWith(rootPrefix + '\\'));
 }
 
 async function clearOwned(rootPrefix, customJava) {
