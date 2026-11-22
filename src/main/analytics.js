@@ -36,7 +36,7 @@ function pickGpu(names) {
   const list = (names || []).map(n => String(n).trim()).filter(Boolean);
   if (!list.length) return '';
   return list.find(n => /nvidia|geforce/i.test(n))
-    || list.find(n => /radeon rx|\barc\b/i.test(n) && !/intel/i.test(n))
+    || list.find(n => /radeon rx|\barc\b/i.test(n) && !/iris|uhd/i.test(n))
     || list[0];
 }
 
@@ -101,6 +101,7 @@ async function post(ep, rows) {
         'User-Agent': USER_AGENT,
       },
       body: JSON.stringify(rows),
+      signal: AbortSignal.timeout(10000),
     });
     return res.ok;
   } catch {

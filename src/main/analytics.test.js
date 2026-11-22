@@ -39,10 +39,12 @@ test('the discrete adapter wins over an integrated one', () => {
   const nvidia = 'NVIDIA GeForce RTX 4060 Laptop GPU';
   const radeonIGPU = 'AMD Radeon(TM) Graphics';
   const radeonDGPU = 'AMD Radeon RX 7600M XT';
+  const arc = 'Intel(R) Arc(TM) A750 Graphics';
   assert.equal(analytics.pickGpu([intel, nvidia]), nvidia);
   assert.equal(analytics.pickGpu([nvidia, intel]), nvidia);
   assert.equal(analytics.pickGpu([intel, radeonIGPU]), intel);
   assert.equal(analytics.pickGpu([radeonIGPU, radeonDGPU]), radeonDGPU);
+  assert.equal(analytics.pickGpu([radeonIGPU, arc]), arc);
   assert.equal(analytics.pickGpu([intel]), intel);
   assert.equal(analytics.pickGpu([]), '');
   assert.equal(analytics.pickGpu(['  ', '', intel]), intel);

@@ -258,7 +258,7 @@ async function launch(server) {
       root, config: launchConfig, settings: s, account, signal: abort.signal,
       report: p => send('game:progress', p),
     });
-    if (s.discreteGpu !== false) gpupref.preferDiscrete(prepared.javaPath).catch(() => {});
+    if (s.discreteGpu !== false) await gpupref.preferDiscrete(prepared.javaPath);
     send('game:progress', {
       stage: 'launch',
       text: server ? `Подключение к ${server}` : `Запуск Minecraft ${launchConfig.minecraft}`,
@@ -289,7 +289,8 @@ async function launch(server) {
     started.child.on('exit', code => onExit(code));
     if (close) {
       started.child.unref();
-      setTimeout(() => app.quit(), 600);
+      // Give the session_end row time to leave before the app goes away.
+      setTimeout(() => app.quit(), 1500);
     } else if (s.afterLaunch === 'hide' && win) {
       setTimeout(() => win && win.minimize(), 1200);
     }

@@ -24,3 +24,18 @@ test('only values with our format count as ours', () => {
   assert.deepEqual(gpupref.ourPaths(output), ['C:\\games\\javaw.exe']);
   assert.deepEqual(gpupref.ourPaths(''), []);
 });
+
+test('cleanup touches only the launcher runtime and the picked custom Java', () => {
+  const rootPrefix = 'D:\\games\\.vanilla-plus-plus\\runtime';
+  const custom = 'C:\\tools\\jdk-25\\bin\\javaw.exe';
+  const paths = [
+    'C:\\games\\javaw.exe',                                  // another app's own preference
+    'D:\\games\\.vanilla-plus-plus\\runtime\\jre\\bin\\javaw.exe',
+    'D:\\games\\.vanilla-plus-plus\\runtime-old\\bin\\javaw.exe', // prefix trick
+    custom,
+    'D:\\SteamLibrary\\MoonSweepers.exe',
+  ];
+  assert.deepEqual(gpupref.ownedPaths(paths, rootPrefix, custom),
+    ['D:\\games\\.vanilla-plus-plus\\runtime\\jre\\bin\\javaw.exe', custom]);
+  assert.deepEqual(gpupref.ownedPaths([], rootPrefix, custom), []);
+});

@@ -44,13 +44,16 @@ async function preferDiscrete(exe) {
   await run(addArgs(exe));
 }
 
-// Values for the bundled runtime and for the custom Java the player picked; other
+// Values for the bundled runtime and for the player's custom Java path; other
 // programs' preferences are left completely alone.
+function ownedPaths(paths, rootPrefix, customJava) {
+  return (paths || []).filter(p => p === customJava || p.startsWith(rootPrefix + path.sep));
+}
+
 async function clearOwned(rootPrefix, customJava) {
   if (process.platform !== 'win32') return;
-  const paths = ourPaths(await run(queryArgs())).filter(p =>
-    p === customJava || p.startsWith(rootPrefix + path.sep));
+  const paths = ownedPaths(ourPaths(await run(queryArgs())), rootPrefix, customJava);
   for (const p of paths) await run(deleteArgs(p));
 }
 
-module.exports = { addArgs, deleteArgs, queryArgs, ourPaths, preferDiscrete, clearOwned };
+module.exports = { addArgs, deleteArgs, queryArgs, ourPaths, ownedPaths, preferDiscrete, clearOwned };

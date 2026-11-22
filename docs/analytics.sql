@@ -30,6 +30,10 @@ create policy "anon inserts only"
   to anon
   with check (true);
 
+-- Без этих двух строк PostgREST отвечает 401 даже при работающей политике.
+grant usage on schema public to anon;
+grant insert on public.usage_events to anon;
+
 -- Примеры отчётов -----------------------------------------------------------
 -- Активные игроки за неделю (сессия = одна игра):
 --   select count(distinct client_id) from usage_events
