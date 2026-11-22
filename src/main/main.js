@@ -17,6 +17,8 @@ const { ping } = require('./ping');
 const auth = require('./auth');
 const updater = require('./updater');
 const uninstall = require('./uninstall');
+const analytics = require('./analytics');
+const gpupref = require('./gpupref');
 const { exists, readTail } = require('./util');
 const { MAX_LOG_BYTES, flattenLog4j, takeLogLines } = require('./logs');
 
@@ -205,6 +207,7 @@ async function init() {
       ? { url: pathToFileURL(s.customBackground.file).href, name: s.customBackground.name } : null,
     state: { phase: session.phase, startedAt: session.startedAt, server: session.server },
     update: null,
+    analyticsAsk: !settings.get().consentAsked,
   };
 }
 
@@ -228,12 +231,14 @@ async function launch(server) {
     }
 
     let launchConfig = config;
+    let packVersion = '';
     if (mrpack.projectId(config)) {
       const synced = await mrpack.sync(root, config, {
         signal: abort.signal,
         report: p => send('game:progress', p),
       });
       launchConfig = synced.config || config;
+      packVersion = synced.versionNumber || '';
       send('pack:status', {
         enabled: true,
         project: mrpack.projectId(config),
@@ -253,6 +258,7 @@ async function launch(server) {
       root, config: launchConfig, settings: s, account, signal: abort.signal,
       report: p => send('game:progress', p),
     });
+    if (s.discreteGpu !== false) gpupref.preferDiscrete(prepared.javaPath).catch(() => {});
     send('game:progress', {
       stage: 'launch',
       text: server ? `Подключение к ${server}` : `Запуск Minecraft ${launchConfig.minecraft}`,
@@ -275,6 +281,10 @@ async function launch(server) {
     session.startedAt = Date.now();
     settings.update({ lastLaunch: { at: session.startedAt, server: server || null } });
     log('started', started.command.java, 'pid', started.child.pid);
+    analytics.gameStarted({
+      config, settings, minecraft: launchConfig.minecraft,
+      pack: packVersion, ramGb: s.ram || 4,
+    }).catch(() => {});
     setPhase('running', { downloaded: prepared.downloaded });
     started.child.on('exit', code => onExit(code));
     if (close) {
@@ -339,6 +349,11 @@ async function onExit(code) {
   }
   session.stopping = false;
   session.startedAt = 0;
+  analytics.gameEnded({
+    config, settings, durationS: ranFor / 1000,
+    exitCode: Number.isInteger(code) ? code : null,
+    crashed: !!extra.crash,
+  }).catch(() => {});
   setPhase('idle', extra);
   if (win) {
     if (win.isMinimized()) win.restore();
@@ -495,12 +510,14 @@ async function readLog(id = 'game') {
   };
 }
 
-const logFollow = { id: '', file: '', offset: 0, pending: '', timer: null, watcher: null, gen: 0 };
+const logFollow = { id: '', file: '', offset: 0, pending: '', timer: null, poll: null, watcher: null, gen: 0 };
 
 function stopLogFollow() {
   logFollow.gen += 1;
   clearTimeout(logFollow.timer);
+  clearInterval(logFollow.poll);
   logFollow.timer = null;
+  logFollow.poll = null;
   try { logFollow.watcher?.close(); } catch { /* already closed */ }
   logFollow.watcher = null;
   logFollow.pending = '';
@@ -513,6 +530,13 @@ function scheduleLogPump() {
   logFollow.timer = setTimeout(() => { pumpLog().catch(() => {}); }, 30);
 }
 
+// Windows fs.watch can stall for seconds while the game holds the file open or
+// recreates it; a light poll keeps the tail honest no matter what the events do.
+function startLogPoll() {
+  clearInterval(logFollow.poll);
+  logFollow.poll = setInterval(() => { pumpLog().catch(() => {}); }, 200);
+}
+
 function watchLogFile() {
   try { logFollow.watcher?.close(); } catch { /* already closed */ }
   const file = logFollow.file;
@@ -521,10 +545,10 @@ function watchLogFile() {
   const onDir = (_event, name) => {
     if (name && name !== base) return;
     watchLogFile();
-    scheduleLogPump();
+    pumpLog().catch(() => {});
   };
   try {
-    logFollow.watcher = fs.watch(file, scheduleLogPump);
+    logFollow.watcher = fs.watch(file, () => { pumpLog().catch(() => {}); });
     logFollow.watcher.on('error', () => { logFollow.watcher = null; try { logFollow.watcher = fs.watch(dir, onDir); } catch { /* dir missing */ } });
   } catch {
     try { logFollow.watcher = fs.watch(dir, onDir); } catch { /* logs folder is not there yet */ }
@@ -569,6 +593,7 @@ async function followLog(id) {
   logFollow.file = pick.file;
   logFollow.offset = data.size || 0;
   watchLogFile();
+  startLogPoll();
   return data;
 }
 
@@ -763,6 +788,17 @@ function registerIpc() {
       throw new Error('Сменить скин можно у лицензии Microsoft и у Ely.by');
     }
     return publicAccount(rememberAccount(await auth.uploadSkin(account, file)));
+  });
+  handle('analytics:answer', on => {
+    settings.update({ consentAsked: true, analytics: !!on });
+    return settings.view();
+  });
+  handle('gpu:toggle', async on => {
+    settings.update({ discreteGpu: !!on });
+    const s = settings.get();
+    if (!on) await gpupref.clearOwned(path.join(gameRoot(), 'runtime'), s.javaPath);
+    else if (s.javaMode === 'custom' && s.javaPath) await gpupref.preferDiscrete(s.javaPath);
+    return settings.view();
   });
   handle('window:minimize', () => win?.minimize());
   handle('window:close', () => {

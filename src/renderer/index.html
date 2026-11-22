@@ -488,6 +488,14 @@
                 <div><div class="set-name">Бета-версии</div><div class="set-sub">Ставить пре-релизы лаунчера с GitHub</div></div>
                 <button class="switch" data-key="beta"></button>
               </div>
+              <div class="set st" style="--i:9">
+                <div><div class="set-name">Дискретная графика</div><div class="set-sub">Игра идёт на самой производительной видеокарте</div></div>
+                <button class="switch" data-key="discreteGpu"></button>
+              </div>
+              <div class="set st" style="--i:10">
+                <div><div class="set-name">Помогать улучшать лаунчер</div><div class="set-sub">Анонимная статистика: система, железо, длительность сессий</div></div>
+                <button class="switch" data-key="analytics"></button>
+              </div>
             </div>
           </div>
         </div>
@@ -519,6 +527,18 @@
         <div class="drop-icon"><svg><use href="#i-plus"/></svg></div>
         <div class="drop-title" id="dropTitle">Отпустите, чтобы добавить мод</div>
         <div class="drop-sub" id="dropSub">Файлы .jar для Fabric · Minecraft 26.2</div>
+      </div>
+    </div>
+
+    <!-- the analytics consent question, asked once, in the launcher's own style -->
+    <div class="ask" id="ask" hidden>
+      <div class="ask-card glass">
+        <div class="card-head"><svg class="ic"><use href="#i-send"/></svg><span>Помогать улучшать Vanilla++?</span></div>
+        <p class="ask-text">Мы соберём немного анонимной статистики: ваша система, процессор, память, видеокарта, версии игры и сколько длились игровые сессии. IP-адреса, ники и содержимое папок мы не собираем и не читаем.</p>
+        <div class="ask-actions">
+          <button class="btn wash" id="askNo">Не отправлять</button>
+          <button class="btn primary" id="askYes">Отправлять статистику</button>
+        </div>
       </div>
     </div>
 

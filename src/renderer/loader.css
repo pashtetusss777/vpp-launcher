@@ -826,6 +826,26 @@ svg.ic, .ic svg { width: 15px; height: 15px; fill: currentColor; flex: none; }
 .drop-title { font-size: 18px; font-weight: 500; }
 .drop-sub { margin-top: 6px; font-size: 12px; color: var(--dim); }
 
+/* the analytics consent question: a dimmed window with one glass card in the middle */
+.ask {
+  position: fixed; inset: 0; z-index: 60;
+  display: grid; place-items: center;
+  background: rgb(0 0 0 / .5);
+  opacity: 0; visibility: hidden;
+  transition: opacity .3s var(--ease), visibility 0s .3s;
+}
+.ask.on { opacity: 1; visibility: visible; transition: opacity .3s var(--ease), visibility 0s; }
+.ask-card {
+  width: 440px; max-width: 90%;
+  border-radius: 16px; padding: 16px 18px 18px;
+  transform: scale(.95) translateY(8px);
+  transition: transform .35s var(--ease);
+}
+.ask.on .ask-card { transform: none; }
+.ask-card .card-head { margin-bottom: 8px; }
+.ask-text { margin: 0; font-size: 13px; line-height: 1.55; color: var(--on); }
+.ask-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+
 .toast {
   position: absolute; left: 50%; bottom: 22px; z-index: 15;
   display: flex; align-items: center; gap: 9px;

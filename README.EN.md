@@ -51,12 +51,27 @@ The launcher updates itself, just press the button on the banner. If an update g
 
 > **Disclaimer.** Vanilla++ is not affiliated with Mojang or Ely.by. Not an official Minecraft product.
 
+## What data the launcher collects
+
+Only with explicit consent: the question shows up once on first launch, and the answer can be changed in settings at any time.
+
+| Collected | Never collected |
+|---|---|
+| OS, version, architecture, CPU cores, RAM size, GPU model | IP addresses |
+| Launcher, Minecraft and modpack versions | Nicknames, accounts, skins |
+| Game session durations, exit code, whether it crashed | The contents of your folders and files |
+| A random installation id, not linked to a person | Anything else |
+
+The data lands in the server's Supabase table; only the launcher itself can write there. The schema and sample reports live in [`docs/analytics.sql`](docs/analytics.sql).
+
+The launcher can also ask Windows to run the game on the discrete GPU: a standard per-user registry entry (one value for our Java), removed when the settings toggle is turned off. This choice never reaches analytics.
+
 ## Building from source
 
 ```sh
 npm ci         # dependencies, Node 22+ required
 npm start      # run from source
-npm test       # 46 regression tests, no network and no game launch
+npm test       # 51 regression tests, no network and no game launch
 npm run dist   # builds for the current platform
 ```
 
@@ -67,6 +82,12 @@ npm run dist   # builds for the current platform
 - For a full backup of encrypted settings, keep the `Local State` file from the same folder along with them: on Windows the decryption key is bound to the OS user. And no, do not publish these files.
 
 ## FAQ
+
+**Does the launcher collect any data?**
+Only with your consent: your system, versions and session lengths. The full list is in "What data the launcher collects", and settings let you turn it off anytime.
+
+**My laptop has two GPUs. What does the launcher do?**
+By default it asks Windows to run the game on the most powerful GPU, using the standard per-app preference from Windows display settings, written into your user profile. Nothing system-wide changes and no other programs are touched. Turn off the "Дискретная графика" toggle in settings and the entry is removed.
 
 **Where are the game files and mods?**
 In `%APPDATA%\.vanilla-plus-plus`. The "Папка игры" button in the launcher opens it for you. Mods live in `mods`, logs in `launcher`.

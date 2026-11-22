@@ -1941,6 +1941,8 @@
     fullscreen: on => on ? 'Игра запустится на весь экран' : 'Игра запустится в окне',
     autoAccent: on => on ? 'Цвет подбирается под фон' : 'Ручной выбор цвета',
     beta: on => on ? 'Будут ставиться пре-релизы лаунчера' : 'Только обычные версии лаунчера',
+    analytics: on => on ? 'Спасибо! Анонимная статистика будет отправляться' : 'Статистика не отправляется',
+    discreteGpu: on => on ? 'Игра пойдёт на дискретной видеокарте' : 'Выбором видеокарты управляет Windows',
   };
 
   function setSwitch(key, on) {
@@ -1960,6 +1962,10 @@
     setSwitch(key, on);
     if (key === 'bundledJava') save({ javaMode: on ? 'bundled' : 'custom' });
     else if (key === 'beta') save({ beta: on }, true).then(() => api.update.check()).then(showLauncherUpdate).catch(() => {});
+    else if (key === 'discreteGpu') api.gpu.toggle(on).then(v => { state.settings = v; }).catch(() => {
+      setSwitch(key, !on);
+      status('settings', 'warn', 'Не получилось изменить настройку видеокарты', 'warn');
+    });
     else save({ [key]: on });
     status('settings', on ? 'check' : 'minus', SWITCH_TEXT[key](on), on ? 'good' : '');
   }));
@@ -2675,6 +2681,24 @@
 
   // ------------------------------------------------------------------ the loader's own name and what it runs
 
+  // the consent question lives in the launcher's own style, not a system dialog
+  function askAnalytics() {
+    const el = $('#ask');
+    el.hidden = false;
+    requestAnimationFrame(() => el.classList.add('on'));
+    $('#askYes').onclick = () => answer(true);
+    $('#askNo').onclick = () => answer(false);
+    async function answer(on) {
+      el.classList.remove('on');
+      setTimeout(() => { el.hidden = true; }, 320);
+      try {
+        state.settings = await api.analytics.answer(on);
+      } catch { state.settings.analytics = on; }
+      setSwitch('analytics', on);
+      toast(on ? 'send' : 'minus', on ? 'Спасибо! Статистика будет отправляться' : 'Статистика не отправляется', on ? 'good' : '');
+    }
+  }
+
   function showLauncherUpdate(info) {
     const el = $('#updateBanner');
     if (!el) return;
@@ -2760,6 +2784,9 @@
     renderServers();
     pingServers();
     showBuild();
+    setSwitch('analytics', !!state.settings.analytics);
+    setSwitch('discreteGpu', state.settings.discreteGpu !== false);
+    if (boot.analyticsAsk) askAnalytics();
     const updateBanner = $('#updateBanner');
     if (updateBanner) {
       updateBanner.addEventListener('click', async () => {

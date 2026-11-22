@@ -10,6 +10,11 @@
   "updates": {
     "github": "pashtetusss777/vpp-launcher"
   },
+  "analytics": {
+    "supabase": "https://hsqoivrzwuqevdwtllit.supabase.co",
+    "anonKey": "sb_publishable_YGv2QJojw-Kn3J439sQKww_8_aTby90",
+    "comment": "URL проекта Supabase и anon key из Settings -> API. Пусто = статистика никуда не отправляется, даже при согласии игрока."
+  },
   "defaults": {
     "themeMode": "dark",
     "background": "sakura",

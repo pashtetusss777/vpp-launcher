@@ -38,6 +38,11 @@ const DEFAULTS = {
   beta: false,
   servers: null,
   lastLaunch: null,
+  analytics: false,
+  consentAsked: false,
+  clientId: null,
+  gpu: null,
+  discreteGpu: true,
 };
 
 class Settings {

@@ -88,4 +88,6 @@ contextBridge.exposeInMainWorld('vanilla', {
     minimize: () => call('window:minimize'),
     close: () => call('window:close'),
   },
+  gpu: { toggle: on => call('gpu:toggle', on) },
+  analytics: { answer: on => call('analytics:answer', on) },
 });

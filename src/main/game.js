@@ -163,10 +163,20 @@ async function start({ root, prepared, settings, account, server, detached, stdi
   await fsp.mkdir(command.nativesDir, { recursive: true });
   for (const sub of ['java', 'jna', 'lwjgl', 'netty']) await fsp.mkdir(path.join(command.nativesDir, sub), { recursive: true });
   if (!await exists(command.java)) throw new Error(`Java не найдена: ${command.java}`);
+  const env = { ...process.env };
+  // Hybrid laptops on Linux need the PRIME offload variables to reach the NVIDIA card.
+  if (process.platform === 'linux' && settings.discreteGpu !== false) {
+    const gpu = await require('./analytics').gpuOf(settings, require('./analytics').defaultGpuDetector());
+    if (/nvidia/i.test(gpu)) {
+      env.__NV_PRIME_RENDER_OFFLOAD = '1';
+      env.__GLX_VENDOR_LIBRARY_NAME = 'nvidia';
+    }
+  }
   const child = spawn(command.java, command.args, {
     cwd: command.cwd,
     detached: !!detached,
     windowsHide: false,
+    env,
     stdio: stdio != null ? ['ignore', stdio, stdio] : detached ? 'ignore' : ['ignore', 'pipe', 'pipe'],
   });
   await new Promise((resolve, reject) => {
