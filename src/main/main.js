@@ -1,6 +1,7 @@
 'use strict';
 
 const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
+const { spawn } = require('child_process');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
@@ -286,7 +287,7 @@ async function launch(server) {
       pack: packVersion, ramGb: s.ram || 4,
     }).catch(() => {});
     setPhase('running', { downloaded: prepared.downloaded });
-    started.child.on('exit', code => onExit(code));
+    started.child.on('exit', code => onExit(code).catch(() => {}));
     if (close) {
       started.child.unref();
       // Give the session_end row time to leave before the app goes away.
@@ -699,7 +700,9 @@ function registerIpc() {
   handle('init', init);
   handle('settings:update', patch => {
     const allowed = { ...patch };
-    for (const key of ['accounts', 'current', 'lastLaunch']) delete allowed[key];
+    // Accounts, consent and analytics-owned fields change only through their own handlers.
+    for (const key of ['accounts', 'current', 'lastLaunch', 'analytics', 'consentAsked', 'clientId', 'gpu',
+      'gameDir', 'javaPath', 'jvmArgs', 'customBackground']) delete allowed[key];
     settings.update(allowed);
     return settings.view();
   });
@@ -793,6 +796,26 @@ function registerIpc() {
   handle('analytics:answer', on => {
     settings.update({ consentAsked: true, analytics: !!on });
     return settings.view();
+  });
+  handle('java:args', text => {
+    const value = String(text || '').trim();
+    // Flags that load code into the JVM would turn a saved setting into persistent code execution.
+    if (/(?:^|\s)-(?:javaagent|agentlib|agentpath|xbootclasspath|bootclasspath|Xrun)|OnOutOfMemoryError/i.test(value)) {
+      throw new Error('Аргументы, подгружающие код в игру, запрещены');
+    }
+    return settings.update({ jvmArgs: value.slice(0, 2000) });
+  });
+  handle('java:path', async file => {
+    file = String(file || '').trim();
+    if (!file) return settings.update({ javaPath: '' });
+    if (!await exists(file)) throw new Error(`Java не найдена: ${file}`);
+    // A binary that cannot run as Java must never become the game's java.
+    await new Promise((resolve, reject) => {
+      const child = spawn(file, ['-version'], { windowsHide: true, timeout: 8000, stdio: 'ignore' });
+      child.once('exit', code => code === 0 ? resolve() : reject(new Error('Это не рабочая Java')));
+      child.once('error', () => reject(new Error('Это не рабочая Java')));
+    });
+    return settings.update({ javaPath: file });
   });
   handle('gpu:toggle', async on => {
     settings.update({ discreteGpu: !!on });

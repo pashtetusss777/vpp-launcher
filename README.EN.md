@@ -77,7 +77,7 @@ npm run dist   # builds for the current platform
 
 ## Settings and profile recovery
 
-- Windows: `%APPDATA%\Vanilla++\settings.json`. Theme and accounts are plain JSON, tokens live separately in the encrypted `accountSecrets` field. The older `enc1.` format is still readable.
+- Windows: `%APPDATA%\Vanilla++\settings.json`. Theme and accounts are plain JSON, tokens live separately in the encrypted `accountSecrets` field. The older `enc1.` format is still readable. On Linux without a system keyring, tokens are not stored at all and the player logs in again.
 - Before the first migration of an old file a `settings.json.bak` copy is created. If the settings file is damaged, the launcher tells you instead of silently resetting the profile.
 - For a full backup of encrypted settings, keep the `Local State` file from the same folder along with them: on Windows the decryption key is bound to the OS user. And no, do not publish these files.
 

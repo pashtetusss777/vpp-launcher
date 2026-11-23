@@ -62,14 +62,16 @@ function linuxGpu() {
   });
 }
 
+// Detected once per week: hardware does not drift often, but docks and eGPUs do.
 async function gpuOf(settings, detect) {
   const cached = settings.get().gpu;
-  if (typeof cached === 'string') return cached;
+  if (typeof cached === 'string' && settings.get().gpuAt > Date.now() - 7 * 86400000) return cached;
   let name = '';
-  try { name = await detect(); } catch { /* keep empty */ }
+  try { name = await detect(); } catch { /* keep the old value */ }
   name = String(name || '').replace(/\s+/g, ' ').trim().slice(0, 80);
-  settings.update({ gpu: name });
-  return name;
+  const next = name || (typeof cached === 'string' ? cached : '');
+  settings.update({ gpu: next, gpuAt: Date.now() });
+  return next;
 }
 
 function defaultGpuDetector() {

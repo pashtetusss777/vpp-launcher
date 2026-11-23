@@ -566,7 +566,7 @@
   const hueOf = s => [...s].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % 360;
 
   function modIcon(m) {
-    if (m.icon) return `<span class="row-icon has-img"><img src="${m.icon}" alt=""></span>`;
+    if (m.icon) return `<span class="row-icon has-img"><img src="${esc(m.icon)}" alt=""></span>`;
     const h = hueOf(m.name);
     const letters = m.name.replace(/[^A-Za-zА-Яа-я0-9 ]/g, '').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
     return `<span class="row-icon" style="background:linear-gradient(135deg,hsl(${h} 42% 40%),hsl(${(h + 40) % 360} 46% 26%))">${esc(letters)}</span>`;
@@ -1962,9 +1962,13 @@
     setSwitch(key, on);
     if (key === 'bundledJava') save({ javaMode: on ? 'bundled' : 'custom' });
     else if (key === 'beta') save({ beta: on }, true).then(() => api.update.check()).then(showLauncherUpdate).catch(() => {});
-    else if (key === 'discreteGpu') api.gpu.toggle(on).then(v => { state.settings = v; }).catch(() => {
+    else if (key === 'discreteGpu') api.gpu.toggle(on).then(v => { if (v.discreteGpu === on) state.settings = v; }).catch(() => {
       setSwitch(key, !on);
       status('settings', 'warn', 'Не получилось изменить настройку видеокарты', 'warn');
+    });
+    else if (key === 'analytics') api.analytics.answer(on).then(v => { state.settings = v; }).catch(() => {
+      setSwitch(key, !on);
+      status('settings', 'warn', 'Не получилось изменить настройку статистики', 'warn');
     });
     else save({ [key]: on });
     status('settings', on ? 'check' : 'minus', SWITCH_TEXT[key](on), on ? 'good' : '');
@@ -1985,8 +1989,25 @@
     });
     input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); });
   }
-  bindInput('#javaPath', 'javaPath', { done: v => status('settings', 'java', v ? 'Путь к Java сохранён' : 'Путь к Java очищен') });
-  bindInput('#jvmArgs', 'jvmArgs', { done: () => status('settings', 'java', 'Аргументы JVM сохранены', 'good') });
+  async function saveInput(id, call, key, done) {
+    const input = $(id);
+    input.addEventListener('change', async () => {
+      const value = input.value.trim();
+      try {
+        state.settings = await call(value);
+        input.value = value;
+        if (done) done(value);
+      } catch (e) {
+        input.value = state.settings[key] ?? '';
+        status('settings', 'warn', e.message, 'warn');
+      }
+    });
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); });
+  }
+  saveInput('#javaPath', v => api.java.path(v), 'javaPath',
+    v => status('settings', 'java', v ? 'Путь к Java сохранён' : 'Путь к Java очищен'));
+  saveInput('#jvmArgs', v => api.java.args(v), 'jvmArgs',
+    () => status('settings', 'java', 'Аргументы JVM сохранены', 'good'));
   const size = (min, maxV) => ({ parse: v => parseInt(v, 10), check: v => Number.isFinite(v) && v >= min && v <= maxV });
   const sizeDone = () => status('settings', 'monitor', `Окно игры - ${state.settings.width}×${state.settings.height}`, 'good');
   bindInput('#resW', 'width', { ...size(640, 7680), done: sizeDone });
@@ -1996,8 +2017,7 @@
     const [file] = await api.pick('java');
     if (!file) return;
     $('#javaPath').value = file;
-    save({ javaPath: file });
-    status('settings', 'java', 'Java выбрана', 'good');
+    $('#javaPath').dispatchEvent(new Event('change'));
   });
 
   function placeSeg(seg) {

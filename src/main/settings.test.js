@@ -57,6 +57,31 @@ test('unreadable settings are never silently replaced by defaults', async t => {
   }
 });
 
+test('without a keyring the tokens are dropped instead of written in the clear', () => {
+  const data = {
+    accounts: [{ id: 'msa:one', type: 'microsoft', name: 'Player', refreshToken: 'private-refresh' }],
+    themeMode: 'light',
+  };
+  const payload = writePayload(data, null);
+  assert.equal(payload.includes('private-refresh'), false);
+  const parsed = JSON.parse(payload);
+  assert.equal(parsed.accounts[0].name, 'Player');
+  assert.equal(parsed.accounts[0].refreshToken, undefined);
+});
+
+test('server lists are shape-checked before they reach the network layer', async t => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'vpp-servers-'));
+  t.after(() => fsp.rm(root, { recursive: true, force: true }));
+  const file = path.join(root, 'settings.json');
+  await fsp.writeFile(file, JSON.stringify({ accounts: [] }));
+  const settings = new Settings(file);
+  t.after(() => clearTimeout(settings.timer));
+  assert.throws(() => settings.update({ servers: [{ name: 'x', address: 'bad path' }] }), /Некорректный список/);
+  assert.throws(() => settings.update({ servers: 'lol' }), /Некорректный список/);
+  settings.update({ servers: [{ name: 'Vanilla++', address: 'mc.vanillaplus.plus' }] });
+  assert.equal(settings.get().servers[0].address, 'mc.vanillaplus.plus');
+});
+
 test('account selection, removal and adding offline profiles preserve refreshed tokens', async t => {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'vpp-accounts-'));
   let settings;

@@ -42,6 +42,7 @@ const DEFAULTS = {
   consentAsked: false,
   clientId: null,
   gpu: null,
+  gpuAt: 0,
   discreteGpu: true,
 };
 
@@ -68,7 +69,10 @@ class Settings {
     }
     normalizeAccounts(this.data);
     // Keep the pre-migration profile before the first encrypted save.
-    if (!fresh && !fs.existsSync(file + '.bak')) fs.copyFileSync(file, file + '.bak', fs.constants.COPYFILE_EXCL);
+    if (!fresh && !fs.existsSync(file + '.bak')) {
+      // A locked or already-copied backup must not stop the launcher from starting.
+      try { fs.copyFileSync(file, file + '.bak', fs.constants.COPYFILE_EXCL); } catch { /* keep going */ }
+    }
     this.timer = null;
   }
 
@@ -111,7 +115,13 @@ class Settings {
 
   update(patch) {
     for (const [key, value] of Object.entries(patch || {})) {
-      if (Object.hasOwn(DEFAULTS, key)) this.data[key] = value;
+      if (!Object.hasOwn(DEFAULTS, key)) continue;
+      if (key === 'servers' && value != null && (!Array.isArray(value) || value.some(s =>
+        !s || typeof s !== 'object' || typeof s.address !== 'string'
+        || !/^[A-Za-z0-9.-]+(:\d{1,5})?$/.test(s.address)))) {
+        throw new Error('Некорректный список серверов');
+      }
+      this.data[key] = value;
     }
     this.save();
     return this.data;
@@ -174,7 +184,15 @@ function unwrapPayload(raw, box = locker()) {
 }
 
 function writePayload(data, box = locker()) {
-  if (!box) return JSON.stringify(data, null, 2);
+  if (!box) {
+    // Without a keyring the file would be readable by anyone on the machine;
+    // tokens are dropped instead and the player re-logs in on the next launch.
+    const safe = {
+      ...data,
+      accounts: (data.accounts || []).map(({ accessToken, refreshToken, clientToken, ...profile }) => profile),
+    };
+    return JSON.stringify(safe, null, 2);
+  }
   const secrets = (data.accounts || []).map(({ id, accessToken, refreshToken, clientToken }) => ({
     id, accessToken, refreshToken, clientToken,
   }));

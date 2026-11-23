@@ -50,15 +50,18 @@ test('the discrete adapter wins over an integrated one', () => {
   assert.equal(analytics.pickGpu(['  ', '', intel]), intel);
 });
 
-test('the gpu is asked once and then comes from settings', async () => {
-  const settings = fakeSettings();
+test('the gpu is detected once a week, fresh caches are trusted', async () => {
   let asks = 0;
   const detect = async () => { asks++; return '  NVIDIA   RTX  4060  '; };
+  const settings = fakeSettings();
   assert.equal(await analytics.gpuOf(settings, detect), 'NVIDIA RTX 4060');
   assert.equal(await analytics.gpuOf(settings, detect), 'NVIDIA RTX 4060');
   assert.equal(asks, 1);
-  assert.equal(await analytics.gpuOf(fakeSettings({ gpu: '' }), detect), '');
-  assert.equal(asks, 1);
+  const stale = fakeSettings({ gpu: 'Old GPU', gpuAt: Date.now() - 8 * 86400000 });
+  assert.equal(await analytics.gpuOf(stale, detect), 'NVIDIA RTX 4060');
+  assert.equal(asks, 2);
+  assert.equal(await analytics.gpuOf(fakeSettings({ gpu: '', gpuAt: Date.now() }), detect), '');
+  assert.equal(asks, 2);
 });
 
 test('launch and session rows carry the promised fields and nothing else', async t => {
@@ -67,7 +70,7 @@ test('launch and session rows carry the promised fields and nothing else', async
     calls.push({ url, options });
     return { ok: true };
   });
-  const settings = fakeSettings({ analytics: true, clientId: '11111111-2222-3333-4444-555555555555', gpu: 'RTX 4060' });
+  const settings = fakeSettings({ analytics: true, clientId: '11111111-2222-3333-4444-555555555555', gpu: 'RTX 4060', gpuAt: Date.now() });
   assert.equal(await analytics.gameStarted({
     config: CONFIG, settings, minecraft: '26.2', pack: '1.1.8.1', ramGb: 5.5,
   }), true);
@@ -79,6 +82,7 @@ test('launch and session rows carry the promised fields and nothing else', async
     assert.equal(call.url, 'https://abcdefghijk.supabase.co/rest/v1/usage_events');
     assert.equal(call.options.method, 'POST');
     assert.equal(call.options.headers.apikey, CONFIG.analytics.anonKey);
+    assert.ok(call.options.signal instanceof AbortSignal, 'the upload must carry a timeout signal');
     assert.equal(call.options.headers['User-Agent'].startsWith('VanillaPlusPlus/'), true);
   }
   const launch = JSON.parse(calls[0].options.body)[0];

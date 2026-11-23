@@ -89,5 +89,9 @@ contextBridge.exposeInMainWorld('vanilla', {
     close: () => call('window:close'),
   },
   gpu: { toggle: on => call('gpu:toggle', on) },
+  java: {
+    args: text => call('java:args', text),
+    path: file => call('java:path', file),
+  },
   analytics: { answer: on => call('analytics:answer', on) },
 });
