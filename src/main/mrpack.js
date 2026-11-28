@@ -9,7 +9,7 @@ const { pipeline } = require('stream/promises');
 const {
   exists, readJson, writeJson, sha1File, fetchJson, fetchWithRetry,
 } = require('./util');
-const { openZip, readEntry } = require('./zip');
+const { openZip, readEntry, readModInfo } = require('./zip');
 const mods = require('./mods');
 const curseforge = require('./curseforge');
 
@@ -217,6 +217,84 @@ function depsFromIndex(index) {
   return out;
 }
 
+// A minimal fabric-style version range check. Unknown shapes always count as
+// satisfied: the sweep must never remove a jar on a guess.
+function mcVersionParts(version) {
+  const m = /^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?/.exec(String(version).trim());
+  return m ? [+m[1], +m[2] || 0, +m[3] || 0] : null;
+}
+
+function cmpPartial(v, target) {
+  for (let i = 0; i < 3; i++) {
+    if (target[i] == null) continue;
+    if (v[i] !== target[i]) return v[i] - target[i];
+  }
+  return 0;
+}
+
+function clauseSatisfied(parts, clause) {
+  const m = /^(>=|<=|>|<|=|\^|~)?v?(\d+)(?:\.(\d+|x|\*))?(?:\.(\d+|x|\*))?$/i.exec(clause.trim());
+  if (!m) return true;
+  const wild = s => s == null || /^(x|\*)$/i.test(s);
+  const target = [+m[2], wild(m[3]) ? null : +m[3], wild(m[4]) ? null : +m[4]];
+  if (m[1] === '^') {
+    if (parts[0] !== target[0]) return false;
+    return cmpPartial(parts, target) >= 0;
+  }
+  if (m[1] === '~') {
+    if (parts[0] !== target[0] || (target[1] != null && parts[1] !== target[1])) return false;
+    return cmpPartial(parts, target) >= 0;
+  }
+  if (wild(m[3])) return parts[0] === target[0];
+  const cmp = cmpPartial(parts, target);
+  if (m[1] === '>=') return cmp >= 0;
+  if (m[1] === '<=') return cmp <= 0;
+  if (m[1] === '>') return cmp > 0;
+  if (m[1] === '<') return cmp < 0;
+  return cmp === 0;
+}
+
+function rangeSatisfied(parts, declaration) {
+  const items = Array.isArray(declaration) ? declaration : [declaration];
+  for (const item of items) {
+    if (typeof item !== 'string') return true;
+    const clauses = item.trim().split(/\s+/).filter(Boolean);
+    if (!clauses.length) return true;
+    // Fabric joins clauses of one string with AND; array items are OR.
+    if (clauses.every(c => clauseSatisfied(parts, c))) return true;
+  }
+  return false;
+}
+
+// After a pack update, jars the pack dropped (and never told pack.json about)
+// keep sitting in mods/. A jar that declares itself tied to another Minecraft
+// version goes to launcher/removed; anything without a declaration stays.
+async function sweepIncompatible(root, mc, keepPaths, overridesList) {
+  const safe = new Set(keepPaths);
+  for (const rel of overridesList || []) if (/^mods\//.test(rel)) safe.add(rel);
+  const parts = mcVersionParts(mc);
+  if (!parts) return [];
+  const dir = mods.modsDir(root);
+  let names = [];
+  try { names = await fsp.readdir(dir); } catch { return []; }
+  const swept = [];
+  for (const name of names) {
+    if (!/\.jar(\.disabled)?$/i.test(name)) continue;
+    const rel = `mods/${name}`;
+    if (safe.has(rel)) continue;
+    if (name.endsWith('.disabled') && safe.has(`mods/${name.slice(0, -9)}`)) continue;
+    let info = null;
+    try { info = await readModInfo(path.join(dir, name)); } catch { continue; }
+    const dep = info?.info?.depends?.minecraft;
+    if (!dep || rangeSatisfied(parts, dep)) continue;
+    const trash = path.join(root, 'launcher', 'removed');
+    await fsp.mkdir(trash, { recursive: true });
+    await fsp.rename(path.join(dir, name), path.join(trash, name)).catch(() => {});
+    if (fs.existsSync(path.join(trash, name))) swept.push(name);
+  }
+  return swept;
+}
+
 async function status(root, config) {
   const project = projectId(config);
   if (!project) return { enabled: false };
@@ -270,15 +348,31 @@ async function installIndex(root, mrpackPath, { signal, report, previous, label 
     };
   }).filter(f => f.sha1 && f.downloads.length);
 
-  const prevPaths = [];
+  const prevPaths = new Set();
   for (const file of previous?.files || []) {
-    try { prevPaths.push(safeRel(file.path)); } catch { /* a saved path must not escape the game folder */ }
+    try { prevPaths.add(safeRel(file.path)); } catch { /* a saved path must not escape the game folder */ }
+  }
+  // pack.json of an older launcher only recorded the downloadable files; the cached
+  // mrpack of the previous version lists everything that pack ever placed on disk.
+  if (previous?.versionId) {
+    try {
+      const oldPack = path.join(root, 'launcher', 'mrpack', `${previous.versionId}.mrpack`);
+      const zip = await openZip(oldPack);
+      const raw = await readEntry(zip, 'modrinth.index.json', 8 * 1048576);
+      if (raw) for (const f of JSON.parse(raw.toString('utf8')).files || []) {
+        try { prevPaths.add(safeRel(f.path)); } catch { /* never touch unsafe paths */ }
+      }
+    } catch { /* no cached mrpack for that version */ }
   }
   const nextPaths = new Set(wanted.map(f => f.path));
   if (previous) {
     for (const rel of prevPaths) {
       if (nextPaths.has(rel)) continue;
       await fsp.rm(path.join(root, ...rel.split('/')), { force: true }).catch(() => {});
+      // A mod the player switched off lives on as .disabled; both halves must go.
+      if (/\.jar$/i.test(rel)) {
+        await fsp.rm(path.join(root, ...(`${rel}.disabled`).split('/')), { force: true }).catch(() => {});
+      }
     }
   }
 
@@ -334,7 +428,16 @@ async function installIndex(root, mrpackPath, { signal, report, previous, label 
     }
   }
 
-  return { index, wanted, missing, overrides, deps: depsFromIndex(index) };
+  const deps = depsFromIndex(index);
+  let swept = [];
+  if (deps.minecraft) {
+    swept = await sweepIncompatible(root, deps.minecraft, wanted.map(f => f.path), overrides);
+    if (swept.length) {
+      stage(`Убраны несовместимые с ${deps.minecraft} моды (${swept.length}): ${swept.slice(0, 3).join(', ')}${swept.length > 3 ? '…' : ''}`);
+    }
+  }
+
+  return { index, wanted, missing, overrides, swept, deps };
 }
 
 async function installJarZip(root, archive, mc) {
@@ -486,7 +589,11 @@ async function sync(root, config, { signal, report } = {}) {
     versionId,
     versionNumber,
     name: version.name || versionNumber,
-    files: wanted.map(f => ({ path: f.path, sha1: f.sha1 })),
+    // Every path the pack lists, not just the downloadable ones: the removal
+    // sweep of later updates must know about files it never downloaded itself.
+    files: applied.index.files.map(f => {
+      try { return { path: safeRel(f.path), sha1: f.hashes?.sha1 || '' }; } catch { return null; }
+    }).filter(Boolean),
     overrides,
     dependencies: deps,
     updatedAt: Date.now(),
@@ -539,4 +646,5 @@ module.exports = {
   installIndex,
   applyOverrides,
   safeRel,
+  rangeSatisfied,
 };

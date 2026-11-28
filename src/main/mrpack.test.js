@@ -7,7 +7,7 @@ const fs = require('fs');
 const fsp = require('fs/promises');
 const os = require('os');
 const path = require('path');
-const { applyOverrides, installDropped, installIndex, safeRel, sync } = require('./mrpack');
+const { applyOverrides, installDropped, installIndex, safeRel, sync, rangeSatisfied } = require('./mrpack');
 const { openZip, readEntry } = require('./zip');
 const zip = require('./fixtures/zip');
 
@@ -102,6 +102,73 @@ test('an override cannot leave the game folder or replace launcher state', async
   assert.equal(fs.readFileSync(path.join(root, 'keep.txt'), 'utf8'), 'mine');
   assert.equal(fs.existsSync(path.join(root, 'launcher', 'pack.json')), false);
   await fsp.rm(root, { recursive: true, force: true });
+});
+
+test('leftover mods tied to an older Minecraft go to the trash, unknown ones stay', async t => {
+  const root = await tempRoot();
+  t.after(() => fsp.rm(root, { recursive: true, force: true }));
+  await fsp.mkdir(path.join(root, 'mods'), { recursive: true });
+  const jar = (depends) => zip([{ name: 'fabric.mod.json', data: JSON.stringify({
+    id: 'x', name: 'X', version: '1', ...(depends ? { depends: { minecraft: depends } } : {}),
+  }) }]);
+  await fsp.writeFile(path.join(root, 'mods', 'stale.jar'), jar(['26.2']));
+  await fsp.writeFile(path.join(root, 'mods', 'stale-disabled.jar.disabled'), jar('>=26.2 <26.3'));
+  await fsp.writeFile(path.join(root, 'mods', 'user-unknown.jar'), jar(null));
+  await fsp.writeFile(path.join(root, 'mods', 'not-a-mod.jar'), 'garbage');
+  await fsp.writeFile(path.join(root, 'mods', 'kept.jar'), jar('>=26.3'));
+  const cache = path.join(root, 'launcher', 'mrpack');
+  await fsp.mkdir(cache, { recursive: true });
+  const newIndex = { game: 'minecraft', files: [], dependencies: { minecraft: '26.3' } };
+  const newPack = path.join(root, 'launcher', 'mrpack', 'newver.mrpack');
+  await fsp.writeFile(newPack, zip([{ name: 'modrinth.index.json', data: JSON.stringify(newIndex) }]));
+  const applied = await installIndex(root, newPack, {});
+  assert.deepEqual(applied.swept.sort(), ['stale-disabled.jar.disabled', 'stale.jar']);
+  assert.equal(fs.existsSync(path.join(root, 'launcher', 'removed', 'stale.jar')), true);
+  assert.equal(fs.existsSync(path.join(root, 'mods', 'user-unknown.jar')), true);
+  assert.equal(fs.existsSync(path.join(root, 'mods', 'not-a-mod.jar')), true);
+  assert.equal(fs.existsSync(path.join(root, 'mods', 'kept.jar')), true);
+});
+
+test('fabric-style ranges are read the way the loader reads them', () => {
+  const parts = [26, 3, 0];
+  assert.equal(require('./mrpack').rangeSatisfied(parts, ['26.2']), false);
+  assert.equal(require('./mrpack').rangeSatisfied(parts, ['26.3']), true);
+  assert.equal(require('./mrpack').rangeSatisfied(parts, '>=26.2 <26.3'), false);
+  assert.equal(require('./mrpack').rangeSatisfied(parts, '>=26.2'), true);
+  assert.equal(require('./mrpack').rangeSatisfied(parts, '~26.2'), false);
+  assert.equal(require('./mrpack').rangeSatisfied(parts, '~26.3'), true);
+  assert.equal(require('./mrpack').rangeSatisfied(parts, '^26.2'), true);
+  assert.equal(require('./mrpack').rangeSatisfied(parts, '26.x'), true);
+  assert.equal(require('./mrpack').rangeSatisfied(parts, '>=26.2 <26.4'), true);
+  assert.equal(require('./mrpack').rangeSatisfied(parts, ['26.2', '26.3']), true);
+  assert.equal(require('./mrpack').rangeSatisfied(parts, 'who-knows-what'), true);
+});
+
+test('the removal sweep knows the previous mrpack index and disabled twins', async t => {
+  const root = await tempRoot();
+  t.after(() => fsp.rm(root, { recursive: true, force: true }));
+  // The old pack's index; old launchers never recorded entries without sha1 in pack.json.
+  const oldIndex = {
+    game: 'minecraft',
+    files: [
+      { path: 'mods/oldmod.jar', downloads: ['https://cdn.modrinth.com/old.jar'] },
+      { path: 'mods/twin.jar', hashes: { sha1: 'x' }, downloads: ['https://cdn.modrinth.com/twin.jar'] },
+    ],
+    dependencies: { minecraft: '26.2' },
+  };
+  const cache = path.join(root, 'launcher', 'mrpack');
+  await fsp.mkdir(cache, { recursive: true });
+  await fsp.writeFile(path.join(cache, 'oldver.mrpack'), zip([{ name: 'modrinth.index.json', data: JSON.stringify(oldIndex) }]));
+  await fsp.mkdir(path.join(root, 'mods'), { recursive: true });
+  await fsp.writeFile(path.join(root, 'mods', 'oldmod.jar'), 'stale');
+  await fsp.writeFile(path.join(root, 'mods', 'twin.jar.disabled'), 'off');
+  const newIndex = { game: 'minecraft', files: [], dependencies: { minecraft: '26.3' } };
+  const newPack = path.join(root, 'launcher', 'mrpack', 'newver.mrpack');
+  await fsp.writeFile(newPack, zip([{ name: 'modrinth.index.json', data: JSON.stringify(newIndex) }]));
+  const previous = { versionId: 'oldver', files: [{ path: 'mods/twin.jar', sha1: 'x' }] };
+  await installIndex(root, newPack, { previous });
+  assert.equal(fs.existsSync(path.join(root, 'mods', 'oldmod.jar')), false);
+  assert.equal(fs.existsSync(path.join(root, 'mods', 'twin.jar.disabled')), false);
 });
 
 test('a zip header cannot ask for a directory bigger than the file', async () => {
